@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Eventa/Eventa.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Eventa.Tests/Eventa.Tests.csproj" />
+  </Folder>
+</Solution>
