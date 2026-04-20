@@ -222,9 +222,7 @@ public static class EventInvoke
                     context.Emit(receiveEvent, new ReceivePayload<TResponse>(invokeId, response));
                 }
             }
-            catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested)
-            {
-            }
+            catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested) { }
             catch (Exception error)
             {
                 if (!cancellationSource.IsCancellationRequested)
@@ -315,9 +313,7 @@ public static class EventInvoke
                     context.Emit(receiveEvent, new ReceivePayload<TResponse>(state.InvokeId, response));
                 }
             }
-            catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested)
-            {
-            }
+            catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested) { }
             catch (Exception error)
             {
                 if (!state.CancellationSource.IsCancellationRequested)

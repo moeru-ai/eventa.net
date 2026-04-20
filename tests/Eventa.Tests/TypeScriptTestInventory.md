@@ -14,7 +14,7 @@ Status labels:
 | `context.spec.ts` | `covered` | `EventContextTests.cs` | Covers register+emit, same handler only once, once listeners, `off(event)`, returned disposer, `off(event, handler)`, and returned disposer for a specific listener. |
 | `invoke.spec.ts` | `covered` + `adapted` + `deferred` | `InvokeTests.cs` | Covered: request-response, sync lazy context, request-derived error message, exact error instance propagation, abort/cancel with handler notification, concurrent invokes, same handler once, returned handler removal. Adapted: request-stream input and request-stream abort are currently covered at the protocol/handler layer because C# has no public client invoke overload for request streams. Deferred: async lazy context, undefine handler, batch registration, public client-side request stream invoke parity. |
 | `stream.spec.ts` | `covered` | `StreamTests.cs` | Covers server-streaming, `ToStreamHandler`, concurrent streams, error surfacing, abort stream, cancel stream via async enumerator disposal, abort request stream with paced input, request stream input, `ToStreamHandler` + stream input. |
-| `invoke-shared.spec.ts` | `covered` | `EventaDefinitionTests.cs` | Adapted to C# by validating tag-derived event IDs and generated uniqueness instead of TS `invokeType` enum objects. |
+| `invoke-shared.spec.ts` | `covered` | `EventaTests.cs`, `Primitives/EventDefinitionTests.cs`, `Primitives/InvokeEventDefinitionTests.cs` | Adapted to C# by validating tag-derived event IDs and generated uniqueness instead of TS `invokeType` enum objects. |
 | `invoke-remote-methods.spec.ts` | `deferred` | none | No corresponding C# public API for remote method stubs. |
 | `context-extension-invoke-internal.spec.ts` | `covered` | `InvokeExtensionsTests.cs` | Validates `RegisterAbortEvent` through the public extension surface. |
 | `utils.spec.ts` | `deferred` | `IdGeneratorTests.cs` only | `isAsyncIterable()` / `isReadableStream()` have no current C# public API equivalent. Existing `IdGenerator` coverage is retained as baseline, but it is outside doc 2.2 `utils.spec.ts` parity. |
@@ -25,6 +25,7 @@ Status labels:
 | --- | --- | --- |
 | `MatchExpressionTests.cs` | `extra` | C# design-contract coverage for `Create`, `And`, `Or`; not a direct TS spec file from doc 2.2. |
 | `IdGeneratorTests.cs` | `extra` | Kept as a green baseline for generated ID length, charset, and non-constant output. |
+| `AsyncSignalQueueTests.cs` | `extra` | Internal queue contract coverage for completion, fault, early-dispose cleanup, and ignored consumer cancellation. |
 
 ## Current intent
 

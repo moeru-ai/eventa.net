@@ -3,17 +3,27 @@ using System.Threading.Channels;
 
 namespace Eventa;
 
+/// <summary>
+/// Bridges push-style producers to <see cref="IAsyncEnumerable{T}" /> while preserving
+/// a single terminal transition.
+/// </summary>
 internal sealed class AsyncSignalQueue<T>
 {
     private readonly Channel<AsyncSignal<T>> _channel = Channel.CreateUnbounded<AsyncSignal<T>>();
     private int _isTerminal;
 
+    /// <summary>
+    /// Writes a value if the queue has not already completed or faulted.
+    /// </summary>
     public bool TryWrite(T value)
     {
         return Volatile.Read(ref _isTerminal) == 0
             && _channel.Writer.TryWrite(AsyncSignal<T>.FromValue(value));
     }
 
+    /// <summary>
+    /// Transitions the queue to its completed state. Subsequent calls are ignored.
+    /// </summary>
     public void Complete()
     {
         if (Interlocked.Exchange(ref _isTerminal, 1) != 0)
@@ -25,6 +35,9 @@ internal sealed class AsyncSignalQueue<T>
         _channel.Writer.TryComplete();
     }
 
+    /// <summary>
+    /// Transitions the queue to its faulted state. Subsequent calls are ignored.
+    /// </summary>
     public void Fault(Exception error)
     {
         ArgumentNullException.ThrowIfNull(error);
@@ -38,6 +51,10 @@ internal sealed class AsyncSignalQueue<T>
         _channel.Writer.TryComplete();
     }
 
+    /// <summary>
+    /// Exposes the queue as an async sequence. When enumeration stops early,
+    /// <paramref name="onDispose" /> can be used to notify upstream owners.
+    /// </summary>
     public IAsyncEnumerable<T> ReadAll(
         bool respectConsumerCancellation = true,
         Func<ValueTask>? onDispose = null)
@@ -46,6 +63,9 @@ internal sealed class AsyncSignalQueue<T>
     }
 }
 
+/// <summary>
+/// The three signal kinds carried through the internal channel.
+/// </summary>
 internal enum AsyncSignalKind
 {
     Value,
@@ -53,6 +73,10 @@ internal enum AsyncSignalKind
     Completed,
 }
 
+/// <summary>
+/// Values and terminal signals share the same channel so the consumer sees
+/// the exact order in which data, completion, and faults were produced.
+/// </summary>
 internal readonly record struct AsyncSignal<T>(T? Value, Exception? Error, AsyncSignalKind Kind)
 {
     public static AsyncSignal<T> FromValue(T value)
@@ -110,6 +134,7 @@ internal sealed class AsyncSignalEnumerator<T>(
                     Current = signal.Value!;
                     return true;
                 case AsyncSignalKind.Error:
+                    // Preserve the original stack when surfacing producer failures.
                     _isTerminal = true;
                     ExceptionDispatchInfo.Capture(signal.Error!).Throw();
                     break;
@@ -130,6 +155,8 @@ internal sealed class AsyncSignalEnumerator<T>(
             return;
         }
 
+        // Only notify the owner when enumeration stops early. Once a terminal
+        // signal has been observed, upstream cleanup has already happened.
         if (_isTerminal || onDispose is null)
         {
             return;
