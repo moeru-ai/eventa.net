@@ -178,7 +178,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task DisposingAsyncEnumeratorNotifiesTheStreamHandler()
+    public async Task DisposingAsyncEnumerator_NotifiesTheStreamHandler()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("cancel-stream");
@@ -207,6 +207,158 @@ public class StreamTests
     }
 
     [Fact]
+    public async Task DisposingAsyncEnumerator_StopsRequestStreamSender_AndPreventsLateRequests()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("dispose-request-stream");
+        var firstInvocationCanceled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondInvocationStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowSecondRequest = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observedRequests = new List<int>();
+        var sync = new object();
+        var handlerStarts = 0;
+
+        async IAsyncEnumerable<int> Requests([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return 1;
+
+            try
+            {
+                await allowSecondRequest.Task.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                yield break;
+            }
+
+            yield return 2;
+        }
+
+        async IAsyncEnumerable<int> Handler(
+            IAsyncEnumerable<int> request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            var invocation = Interlocked.Increment(ref handlerStarts);
+            using var registration = invocation == 1
+                ? cancellationToken.Register(() => firstInvocationCanceled.TrySetResult(true))
+                : default;
+
+            if (invocation == 2)
+            {
+                secondInvocationStarted.TrySetResult(true);
+            }
+
+            await foreach (var value in request.WithCancellation(cancellationToken))
+            {
+                lock (sync)
+                {
+                    observedRequests.Add(value);
+                }
+
+                yield return value;
+            }
+        }
+
+        using var _ = EventStream.DefineStreamInvokeHandler(context, definition, Handler);
+
+        var stream = EventStream.DefineStreamInvoke(
+            context,
+            definition,
+            Requests(TestContext.Current.CancellationToken),
+            TestContext.Current.CancellationToken);
+        await using var enumerator = stream.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+        Assert.True(await enumerator.MoveNextAsync());
+        Assert.Equal(1, enumerator.Current);
+
+        await enumerator.DisposeAsync();
+        await firstInvocationCanceled.Task.WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+
+        allowSecondRequest.TrySetResult(true);
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+
+        Assert.False(secondInvocationStarted.Task.IsCompleted);
+        Assert.Equal(1, Volatile.Read(ref handlerStarts));
+
+        lock (sync)
+        {
+            Assert.Equal([1], observedRequests);
+        }
+    }
+
+    [Fact]
+    public async Task CompletingResponseStream_StopsRequestStreamSender_AndPreventsLateRequests()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("complete-request-stream");
+        var secondInvocationStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowSecondRequest = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var observedRequests = new List<int>();
+        var sync = new object();
+        var handlerStarts = 0;
+
+        async IAsyncEnumerable<int> Requests([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return 1;
+
+            try
+            {
+                await allowSecondRequest.Task.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                yield break;
+            }
+
+            yield return 2;
+        }
+
+        async IAsyncEnumerable<int> Handler(
+            IAsyncEnumerable<int> request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            var invocation = Interlocked.Increment(ref handlerStarts);
+            if (invocation == 2)
+            {
+                secondInvocationStarted.TrySetResult(true);
+            }
+
+            await foreach (var value in request.WithCancellation(cancellationToken))
+            {
+                lock (sync)
+                {
+                    observedRequests.Add(value);
+                }
+
+                yield return value;
+                yield break;
+            }
+        }
+
+        using var _ = EventStream.DefineStreamInvokeHandler(context, definition, Handler);
+
+        var results = await CollectAsync(
+            EventStream.DefineStreamInvoke(
+                context,
+                definition,
+                Requests(TestContext.Current.CancellationToken),
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal([1], results);
+
+        allowSecondRequest.TrySetResult(true);
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+
+        Assert.False(secondInvocationStarted.Task.IsCompleted);
+        Assert.Equal(1, Volatile.Read(ref handlerStarts));
+
+        lock (sync)
+        {
+            Assert.Equal([1], observedRequests);
+        }
+    }
+
+    [Fact]
     public async Task DefineStreamInvoke_SupportsRequestStreamInput()
     {
         var context = new EventContext();
@@ -225,6 +377,28 @@ public class StreamTests
                 CancellationToken.None));
 
         Assert.Equal([6], results);
+    }
+
+    [Fact]
+    public async Task DefineStreamInvoke_SupportsEmptyRequestStreamInput()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("sum-stream-empty");
+
+        using var _ = EventStream.DefineStreamInvokeHandler(
+            context,
+            definition,
+            static (request, cancellationToken) => SumAsync(request, cancellationToken));
+
+        var results = await CollectAsync(
+                EventStream.DefineStreamInvoke(
+                    context,
+                    definition,
+                    Numbers(),
+                    CancellationToken.None))
+            .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Equal([0], results);
     }
 
     [Fact]
@@ -314,6 +488,91 @@ public class StreamTests
         Assert.IsAssignableFrom<OperationCanceledException>(readError);
         Assert.True(stopwatch.ElapsedMilliseconds >= writeIntervalMilliseconds * 4);
         Assert.True(stopwatch.ElapsedMilliseconds < writeIntervalMilliseconds * 5);
+    }
+
+    [Fact]
+    public async Task DefineStreamInvoke_AbortsRequestStreamBeforeFirstItem_AndNotifiesHandler()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("abort-request-stream-before-first-item");
+        var handlerNotified = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var received = new List<int>();
+        var responses = new List<int>();
+        Exception? handlerError = null;
+        Exception? readError = null;
+
+        async IAsyncEnumerable<int> Requests([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            var requestCanceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = cancellationToken.Register(() => requestCanceled.TrySetResult());
+            await requestCanceled.Task.WaitAsync(TestContext.Current.CancellationToken);
+            yield break;
+        }
+
+        async IAsyncEnumerable<int> Handler(
+            IAsyncEnumerable<int> request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            using var registration = cancellationToken.Register(() => handlerNotified.TrySetResult(true));
+            await using var enumerator = request.WithCancellation(cancellationToken).GetAsyncEnumerator();
+
+            while (true)
+            {
+                int value;
+
+                try
+                {
+                    if (!await enumerator.MoveNextAsync())
+                    {
+                        yield break;
+                    }
+
+                    value = enumerator.Current;
+                }
+                catch (Exception error)
+                {
+                    handlerError = error;
+                    throw;
+                }
+
+                received.Add(value);
+                yield return value;
+            }
+        }
+
+        using var _ = EventStream.DefineStreamInvokeHandler(context, definition, Handler);
+        using var cancellationSource = new CancellationTokenSource();
+        var stream = EventStream.DefineStreamInvoke(
+            context,
+            definition,
+            Requests(TestContext.Current.CancellationToken),
+            cancellationSource.Token);
+        var readTask = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var value in stream)
+                {
+                    responses.Add(value);
+                }
+            }
+            catch (Exception error)
+            {
+                readError = error;
+            }
+        }, TestContext.Current.CancellationToken);
+
+        cancellationSource.Cancel();
+
+        await readTask.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await handlerNotified.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Empty(received);
+        Assert.Empty(responses);
+        Assert.NotNull(handlerError);
+        Assert.NotNull(readError);
+        Assert.IsAssignableFrom<OperationCanceledException>(handlerError);
+        Assert.IsAssignableFrom<OperationCanceledException>(readError);
     }
 
     [Fact]

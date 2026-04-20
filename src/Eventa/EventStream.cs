@@ -15,7 +15,7 @@ public static class EventStream
             context,
             eventDefinition,
             cancellationToken,
-            invokeId =>
+            (invokeId, _) =>
             {
                 var sendEvent = new EventDefinition<SendPayload<TRequest>>(eventDefinition.SendEventId);
                 context.Emit(sendEvent, new SendPayload<TRequest>(invokeId, request));
@@ -37,16 +37,16 @@ public static class EventStream
             context,
             eventDefinition,
             cancellationToken,
-            async invokeId =>
+            async (invokeId, requestCancellationToken) =>
             {
                 var sendEvent = new EventDefinition<SendPayload<TRequest>>(eventDefinition.SendEventId);
                 var sendStreamEndEvent = new EventDefinition<StreamEndPayload>(eventDefinition.SendStreamEndId);
 
                 try
                 {
-                    await foreach (var item in request.WithCancellation(cancellationToken).ConfigureAwait(false))
+                    await foreach (var item in request.WithCancellation(requestCancellationToken).ConfigureAwait(false))
                     {
-                        if (cancellationToken.IsCancellationRequested)
+                        if (requestCancellationToken.IsCancellationRequested)
                         {
                             return;
                         }
@@ -54,12 +54,12 @@ public static class EventStream
                         context.Emit(sendEvent, new SendPayload<TRequest>(invokeId, item));
                     }
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (requestCancellationToken.IsCancellationRequested)
                 {
                     return;
                 }
 
-                if (!cancellationToken.IsCancellationRequested)
+                if (!requestCancellationToken.IsCancellationRequested)
                 {
                     context.Emit(sendStreamEndEvent, new StreamEndPayload(invokeId));
                 }
@@ -109,9 +109,7 @@ public static class EventStream
                     context.Emit(receiveStreamEndEvent, new StreamEndPayload(invokeId));
                 }
             }
-            catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested)
-            {
-            }
+            catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested) { }
             catch (Exception error)
             {
                 if (!cancellationSource.IsCancellationRequested)
@@ -220,9 +218,7 @@ public static class EventStream
                     context.Emit(receiveStreamEndEvent, new StreamEndPayload(state.InvokeId));
                 }
             }
-            catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested)
-            {
-            }
+            catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested) { }
             catch (Exception error)
             {
                 if (!state.CancellationSource.IsCancellationRequested)
@@ -319,7 +315,7 @@ public static class EventStream
         IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
         CancellationToken cancellationToken,
-        Func<string, Task> sendRequest)
+        Func<string, CancellationToken, Task> sendRequest)
     {
         var invokeId = IdGenerator.New();
         var sendAbortEvent = new EventDefinition<AbortPayload>(eventDefinition.SendAbortId);
@@ -327,6 +323,10 @@ public static class EventStream
         var receiveErrorEvent = new EventDefinition<ReceiveErrorPayload>(eventDefinition.ReceiveErrorId);
         var receiveStreamEndEvent = new EventDefinition<StreamEndPayload>(eventDefinition.ReceiveStreamEndId);
         var responses = new AsyncSignalQueue<TResponse>();
+        var requestCancellationSource = cancellationToken.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : new CancellationTokenSource();
+        var requestCancellationToken = requestCancellationSource.Token;
         var subscriptions = new List<IDisposable>();
         var finished = 0;
 
@@ -338,36 +338,19 @@ public static class EventStream
             }
         }
 
-        void Complete()
+        void Finish(Exception? error, bool emitAbort)
         {
             if (Interlocked.Exchange(ref finished, 1) != 0)
             {
                 return;
             }
 
-            responses.Complete();
-            Cleanup();
-        }
+            requestCancellationSource.Cancel();
 
-        void Fault(Exception error)
-        {
-            if (Interlocked.Exchange(ref finished, 1) != 0)
+            if (emitAbort)
             {
-                return;
+                context.Emit(sendAbortEvent, new AbortPayload(invokeId));
             }
-
-            responses.Fault(error);
-            Cleanup();
-        }
-
-        void AbortWithCompletion(Exception? error)
-        {
-            if (Interlocked.Exchange(ref finished, 1) != 0)
-            {
-                return;
-            }
-
-            context.Emit(sendAbortEvent, new AbortPayload(invokeId));
 
             if (error is null)
             {
@@ -379,6 +362,22 @@ public static class EventStream
             }
 
             Cleanup();
+            requestCancellationSource.Dispose();
+        }
+
+        void Complete()
+        {
+            Finish(error: null, emitAbort: false);
+        }
+
+        void Fault(Exception error)
+        {
+            Finish(error, emitAbort: false);
+        }
+
+        void AbortWithCompletion(Exception? error)
+        {
+            Finish(error, emitAbort: true);
         }
 
         subscriptions.Add(context.On(receiveEvent, envelope =>
@@ -428,11 +427,9 @@ public static class EventStream
         {
             try
             {
-                await sendRequest(invokeId).ConfigureAwait(false);
+                await sendRequest(invokeId, requestCancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-            }
+            catch (OperationCanceledException) when (requestCancellationToken.IsCancellationRequested) { }
             catch (Exception error)
             {
                 Fault(error);

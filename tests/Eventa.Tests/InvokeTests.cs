@@ -110,6 +110,59 @@ public class InvokeTests
     }
 
     [Fact]
+    public async Task DefineInvoke_WithPreCanceledToken_EmitsAbortOnlyOnce()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<string, string>("pre-canceled");
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var abortCount = 0;
+
+        using var _ = context.On(sendAbortEvent, _ => abortCount++);
+
+        var invoke = EventInvoke.DefineInvoke(context, definition);
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            async () => await invoke("request", cancellationSource.Token));
+
+        Assert.Equal(1, abortCount);
+    }
+
+    [Fact]
+    public async Task DefineInvoke_DoesNotEmitAbortAfterResponseWinsTheRace()
+    {
+        var definition = new InvokeEventDefinition<string, string>("cancel-after-response");
+        var sendEvent = new EventDefinition<SendPayload<string>>(definition.SendEventId);
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var receiveEvent = new EventDefinition<ReceivePayload<string>>(definition.ReceiveEventId);
+        var context = new BlockingDisposeEventContext(receiveEvent.Id);
+        var abortCount = 0;
+
+        using var _ = context.On(sendAbortEvent, _ => abortCount++);
+        using var __ = context.On(sendEvent, envelope =>
+        {
+            Task.Run(() => context.Emit(
+                receiveEvent,
+                new ReceivePayload<string>(envelope.Body.InvokeId, "completed")));
+        });
+
+        var invoke = EventInvoke.DefineInvoke(context, definition);
+        using var cancellationSource = new CancellationTokenSource();
+
+        var pending = invoke("request", cancellationSource.Token);
+        await context.BlockedDisposeStarted.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        cancellationSource.Cancel();
+        context.ReleaseBlockedDispose();
+
+        var result = await pending;
+
+        Assert.Equal("completed", result);
+        Assert.Equal(0, abortCount);
+    }
+
+    [Fact]
     public async Task DefineInvoke_IsolatesConcurrentRequests()
     {
         var context = new EventContext();
@@ -244,6 +297,55 @@ public class InvokeTests
     }
 
     [Fact]
+    public async Task DefineInvokeHandler_AcceptsEmptyRequestStreamProtocolMessages()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("sum-empty");
+        var invokeId = "invoke-empty";
+        var sendStreamEndEvent = new EventDefinition<StreamEndPayload>(definition.SendStreamEndId);
+        var receiveEvent = new EventDefinition<ReceivePayload<int>>(definition.ReceiveEventId);
+        var receiveErrorEvent = new EventDefinition<ReceiveErrorPayload>(definition.ReceiveErrorId);
+        var response = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var received = new List<int>();
+
+        using var _ = context.On(receiveEvent, envelope =>
+        {
+            if (envelope.Body.InvokeId == invokeId)
+            {
+                response.TrySetResult(envelope.Body);
+            }
+        });
+        using var __ = context.On(receiveErrorEvent, envelope =>
+        {
+            if (envelope.Body.InvokeId == invokeId)
+            {
+                response.TrySetException(envelope.Body.Error);
+            }
+        });
+        using var ___ = EventInvoke.DefineInvokeHandler(
+            context,
+            definition,
+            async (request, cancellationToken) =>
+            {
+                var sum = 0;
+                await foreach (var value in request.WithCancellation(cancellationToken))
+                {
+                    received.Add(value);
+                    sum += value;
+                }
+
+                return sum;
+            });
+
+        context.Emit(sendStreamEndEvent, new StreamEndPayload(invokeId));
+
+        var result = await response.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Empty(received);
+        Assert.Equal(new ReceivePayload<int>(invokeId, 0), result);
+    }
+
+    [Fact]
     public async Task DefineInvokeHandler_NotifiesHandlerWhenRequestStreamIsAborted()
     {
         var context = new EventContext();
@@ -298,9 +400,175 @@ public class InvokeTests
         Assert.IsAssignableFrom<OperationCanceledException>(handlerError);
     }
 
+    [Fact]
+    public async Task DefineInvokeHandler_NotifiesHandlerWhenRequestStreamIsAbortedBeforeFirstItem()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("sum-abort-before-first-item");
+        var invokeId = "invoke-1";
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var handlerNotified = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handlerCompleted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var received = new List<int>();
+        Exception? handlerError = null;
+
+        using var _ = EventInvoke.DefineInvokeHandler(
+            context,
+            definition,
+            async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
+            {
+                using var registration = cancellationToken.Register(() => handlerNotified.TrySetResult(true));
+                var sum = 0;
+
+                try
+                {
+                    await foreach (var value in request.WithCancellation(cancellationToken))
+                    {
+                        received.Add(value);
+                        sum += value;
+                    }
+                }
+                catch (Exception error)
+                {
+                    handlerError = error;
+                }
+                finally
+                {
+                    handlerCompleted.TrySetResult(true);
+                }
+
+                return sum;
+            });
+
+        context.Emit(sendAbortEvent, new AbortPayload(invokeId, "stop"));
+
+        await handlerCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await handlerNotified.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Empty(received);
+        Assert.NotNull(handlerError);
+        Assert.IsAssignableFrom<OperationCanceledException>(handlerError);
+    }
+
     private sealed record CancelRequest(int Value);
 
     private sealed record UserRequest(string Name, int Age);
 
     private sealed record UserResponse(string Id);
+
+    private sealed class BlockingDisposeEventContext(string blockedEventId) : IEventContext
+    {
+        private readonly Lock _sync = new();
+        private readonly Dictionary<string, HashSet<Delegate>> _listeners = new(StringComparer.Ordinal);
+        private readonly TaskCompletionSource<bool> _blockedDisposeStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _releaseBlockedDispose =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public IDictionary<string, object> Extensions { get; } = new Dictionary<string, object>();
+
+        public Task BlockedDisposeStarted => _blockedDisposeStarted.Task;
+
+        public void ReleaseBlockedDispose()
+        {
+            _releaseBlockedDispose.TrySetResult(true);
+        }
+
+        public void Emit<TPayload>(EventDefinition<TPayload> eventDefinition, TPayload payload)
+        {
+            ArgumentNullException.ThrowIfNull(eventDefinition);
+
+            List<Action<EventEnvelope<TPayload>>> listeners;
+            lock (_sync)
+            {
+                listeners = _listeners.TryGetValue(eventDefinition.Id, out var registeredListeners)
+                    ? [.. registeredListeners.Cast<Action<EventEnvelope<TPayload>>>()]
+                    : [];
+            }
+
+            var envelope = new EventEnvelope<TPayload>(eventDefinition.Id, payload);
+            foreach (var listener in listeners)
+            {
+                listener(envelope);
+            }
+        }
+
+        public void Emit<TPayload, TOptions>(
+            EventDefinition<TPayload> eventDefinition,
+            TPayload payload,
+            TOptions _)
+            where TOptions : class
+        {
+            Emit(eventDefinition, payload);
+        }
+
+        public IDisposable On<TPayload>(
+            EventDefinition<TPayload> eventDefinition,
+            Action<EventEnvelope<TPayload>> handler)
+        {
+            ArgumentNullException.ThrowIfNull(eventDefinition);
+            ArgumentNullException.ThrowIfNull(handler);
+
+            lock (_sync)
+            {
+                if (!_listeners.TryGetValue(eventDefinition.Id, out var listeners))
+                {
+                    listeners = [];
+                    _listeners[eventDefinition.Id] = listeners;
+                }
+
+                listeners.Add(handler);
+            }
+
+            return new ActionDisposable(() =>
+            {
+                if (StringComparer.Ordinal.Equals(eventDefinition.Id, blockedEventId))
+                {
+                    _blockedDisposeStarted.TrySetResult(true);
+                    _releaseBlockedDispose.Task.GetAwaiter().GetResult();
+                }
+
+                lock (_sync)
+                {
+                    if (_listeners.TryGetValue(eventDefinition.Id, out var listeners))
+                    {
+                        listeners.Remove(handler);
+                        if (listeners.Count == 0)
+                        {
+                            _listeners.Remove(eventDefinition.Id);
+                        }
+                    }
+                }
+            });
+        }
+
+        public IDisposable Once<TPayload>(
+            EventDefinition<TPayload> eventDefinition,
+            Action<EventEnvelope<TPayload>> handler)
+        {
+            throw new NotSupportedException();
+        }
+
+        public void Off<TPayload>(
+            EventDefinition<TPayload> eventDefinition,
+            Action<EventEnvelope<TPayload>>? handler = null)
+        {
+            throw new NotSupportedException();
+        }
+
+        public IDisposable On<TPayload>(
+            MatchExpression<TPayload> matchExpression,
+            Action<EventEnvelope<TPayload>> handler)
+        {
+            throw new NotSupportedException();
+        }
+
+        public void Dispose()
+        {
+            lock (_sync)
+            {
+                _listeners.Clear();
+            }
+        }
+    }
 }

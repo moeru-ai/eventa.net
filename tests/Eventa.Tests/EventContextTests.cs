@@ -156,5 +156,55 @@ public class EventContextTests
         Assert.Equal(["match-first", "match-second"], matchedValues);
     }
 
+    [Fact]
+    public void Emit_CallsAdapterOnSent_AfterLocalListeners()
+    {
+        var calls = new List<string>();
+        using var adapter = new RecordingAdapter(calls);
+        using var context = new EventContext(adapter);
+        var definition = new EventDefinition<TestPayload>("test-event");
+        var expression = new MatchExpression<TestPayload>("match-test-event", _ => true);
+
+        using var _ = context.On(definition, _ => calls.Add("listener"));
+        using var __ = context.On(expression, _ => calls.Add("match"));
+
+        context.Emit(definition, new TestPayload("test"));
+
+        Assert.Equal(
+            ["listener", "received:test-event", "match", "received:match-test-event", "sent:test-event"],
+            calls);
+    }
+
+    [Fact]
+    public void Emit_WhenListenerThrows_DoesNotCallAdapterOnSent()
+    {
+        var calls = new List<string>();
+        using var adapter = new RecordingAdapter(calls);
+        using var context = new EventContext(adapter);
+        var definition = new EventDefinition<TestPayload>("test-event");
+
+        using var _ = context.On(definition, _ => throw new InvalidOperationException("boom"));
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.Emit(definition, new TestPayload("test")));
+
+        Assert.Equal("boom", error.Message);
+        Assert.Empty(calls);
+    }
+
     private sealed record TestPayload(string Value);
+
+    private sealed class RecordingAdapter(List<string> calls) : IEventaAdapter
+    {
+        public void OnSent(string eventId, object? _, object? __ = null)
+        {
+            calls.Add($"sent:{eventId}");
+        }
+
+        public void OnReceived(string eventId, object? _)
+        {
+            calls.Add($"received:{eventId}");
+        }
+
+        public void Dispose() { }
+    }
 }

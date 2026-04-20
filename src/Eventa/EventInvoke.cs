@@ -66,11 +66,16 @@ public static class EventInvoke
                 Cleanup();
             }
 
-            void CompleteCanceled()
+            void FinishCanceled(bool emitAbort)
             {
                 if (Interlocked.Exchange(ref finished, 1) != 0)
                 {
                     return;
+                }
+
+                if (emitAbort)
+                {
+                    context.Emit(sendAbortEvent, new AbortPayload(invokeId));
                 }
 
                 completion.TrySetCanceled(cancellationToken);
@@ -79,8 +84,7 @@ public static class EventInvoke
 
             void AbortFromClient()
             {
-                context.Emit(sendAbortEvent, new AbortPayload(invokeId));
-                CompleteCanceled();
+                FinishCanceled(emitAbort: true);
             }
 
             disposables.Add(context.On(receiveEvent, envelope =>
@@ -118,14 +122,14 @@ public static class EventInvoke
 
             if (cancellationToken.CanBeCanceled)
             {
-                var registration = cancellationToken.Register(AbortFromClient);
-                disposables.Add(new ActionDisposable(registration.Dispose));
-
                 if (cancellationToken.IsCancellationRequested)
                 {
                     AbortFromClient();
                     return completion.Task;
                 }
+
+                var registration = cancellationToken.Register(AbortFromClient);
+                disposables.Add(new ActionDisposable(registration.Dispose));
             }
 
             context.Emit(sendEvent, new SendPayload<TRequest>(invokeId, request));
@@ -143,17 +147,16 @@ public static class EventInvoke
         ArgumentNullException.ThrowIfNull(handler);
 
         var registry = HandlerRegistries.GetValue(context, static _ => new InvokeHandlerRegistry());
-        HandlerRegistration? registration;
 
         lock (registry.SyncRoot)
         {
             if (!registry.Registrations.TryGetValue(eventDefinition.SendEventId, out var handlers))
             {
-                handlers = new Dictionary<Delegate, HandlerRegistration>();
+                handlers = [];
                 registry.Registrations[eventDefinition.SendEventId] = handlers;
             }
 
-            if (!handlers.TryGetValue(handler, out registration))
+            if (!handlers.TryGetValue(handler, out HandlerRegistration? registration))
             {
                 registration = CreateUnaryHandlerRegistration(context, eventDefinition, handler);
                 handlers[handler] = registration;
@@ -173,17 +176,16 @@ public static class EventInvoke
         ArgumentNullException.ThrowIfNull(handler);
 
         var registry = HandlerRegistries.GetValue(context, static _ => new InvokeHandlerRegistry());
-        HandlerRegistration? registration;
 
         lock (registry.SyncRoot)
         {
             if (!registry.Registrations.TryGetValue(eventDefinition.SendEventId, out var handlers))
             {
-                handlers = new Dictionary<Delegate, HandlerRegistration>();
+                handlers = [];
                 registry.Registrations[eventDefinition.SendEventId] = handlers;
             }
 
-            if (!handlers.TryGetValue(handler, out registration))
+            if (!handlers.TryGetValue(handler, out HandlerRegistration? registration))
             {
                 registration = CreateRequestStreamHandlerRegistration(context, eventDefinition, handler);
                 handlers[handler] = registration;
