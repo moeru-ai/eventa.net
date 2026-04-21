@@ -247,15 +247,15 @@ public static class EventStream
             context.On(sendStreamEndEvent, envelope =>
             {
                 // Keep empty request streams as a supported C# contract even though
-                // TypeScript stream.ts ignores sendEventStreamEnd for unknown invokeIds.
+                // current TypeScript stream.ts ignores unknown invokeIds here.
                 var state = GetOrCreateState(envelope.Body.InvokeId);
                 state.Requests.Complete();
             }),
             context.On(sendAbortEvent, envelope =>
             {
-                // Keep pre-first-item aborts as a supported C# contract even though they
-                // can materialize state for unknown invokeIds so the handler still
-                // observes cancellation. This is not current TypeScript parity.
+                // Keep pre-first-item aborts as a supported C# contract; current
+                // TypeScript stream.ts also materializes unknown invokeIds on abort
+                // so the handler still observes cancellation.
                 var state = GetOrCreateState(envelope.Body.InvokeId);
                 state.Requests.Fault(new OperationCanceledException(state.CancellationSource.Token));
                 state.CancellationSource.Cancel();

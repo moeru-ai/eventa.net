@@ -642,6 +642,71 @@ public class StreamTests
     }
 
     [Fact]
+    public async Task DefineStreamInvoke_RequestProducerCanRegisterAfterClientCancellation()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("late-register-after-client-cancellation");
+        var producerWaiting = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowLateRegister = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lateRegisterCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lateRegisterCallbackInvoked = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Exception? lateRegisterError = null;
+        Exception? readError = null;
+
+        async IAsyncEnumerable<int> Requests([EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return 1;
+
+            producerWaiting.TrySetResult(true);
+            await allowLateRegister.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+            try
+            {
+                using var registration = cancellationToken.Register(() => lateRegisterCallbackInvoked.TrySetResult(true));
+            }
+            catch (Exception error)
+            {
+                lateRegisterError = error;
+            }
+            finally
+            {
+                lateRegisterCompleted.TrySetResult();
+            }
+        }
+
+        using var cancellationSource = new CancellationTokenSource();
+        var stream = EventStream.DefineStreamInvoke(
+            context,
+            definition,
+            Requests(TestContext.Current.CancellationToken),
+            cancellationSource.Token);
+        var readTask = Task.Run(async () =>
+        {
+            try
+            {
+                await DrainAsync(stream);
+            }
+            catch (Exception error)
+            {
+                readError = error;
+            }
+        }, TestContext.Current.CancellationToken);
+
+        await producerWaiting.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        cancellationSource.Cancel();
+        allowLateRegister.TrySetResult();
+
+        await lateRegisterCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await lateRegisterCallbackInvoked.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await readTask.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Null(lateRegisterError);
+        Assert.NotNull(readError);
+        Assert.IsAssignableFrom<OperationCanceledException>(readError);
+    }
+
+    [Fact]
     public async Task ToStreamHandler_SupportsRequestStreamInput()
     {
         var context = new EventContext();
