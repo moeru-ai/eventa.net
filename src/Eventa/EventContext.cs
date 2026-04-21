@@ -1,11 +1,15 @@
+using System.Runtime.CompilerServices;
+
 namespace Eventa;
 
 public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
 {
-    private readonly object _sync = new();
+    private readonly Lock _sync = new();
     private readonly Dictionary<string, HashSet<Delegate>> _listeners = new(StringComparer.Ordinal);
     private readonly Dictionary<string, HashSet<Delegate>> _onceListeners = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Type> _eventPayloadTypes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, MatchListenerRegistration> _matchListeners = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Type> _matchExpressionPayloadTypes = new(StringComparer.Ordinal);
 
     public IDictionary<string, object> Extensions { get; } = new Dictionary<string, object>();
 
@@ -18,6 +22,14 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
 
     public void Emit<TPayload>(EventDefinition<TPayload> eventDefinition, TPayload payload)
     {
+        ArgumentNullException.ThrowIfNull(eventDefinition);
+
+        lock (_sync)
+        {
+            CheckEventPayloadTypeBinding(eventDefinition);
+            BindEventPayloadType(eventDefinition);
+        }
+
         EmitCore(eventDefinition, payload, options: null);
     }
 
@@ -27,6 +39,14 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         TOptions options)
         where TOptions : class
     {
+        ArgumentNullException.ThrowIfNull(eventDefinition);
+
+        lock (_sync)
+        {
+            CheckEventPayloadTypeBinding(eventDefinition);
+            BindEventPayloadType(eventDefinition);
+        }
+
         EmitCore(eventDefinition, payload, options);
     }
 
@@ -99,9 +119,12 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
 
         lock (_sync)
         {
+            CheckEventPayloadTypeBinding(eventDefinition);
+            BindEventPayloadType(eventDefinition);
+
             if (!_listeners.TryGetValue(eventDefinition.Id, out var registeredListeners))
             {
-                registeredListeners = new HashSet<Delegate>();
+                registeredListeners = [];
                 _listeners[eventDefinition.Id] = registeredListeners;
             }
 
@@ -120,9 +143,12 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
 
         lock (_sync)
         {
+            CheckEventPayloadTypeBinding(eventDefinition);
+            BindEventPayloadType(eventDefinition);
+
             if (!_onceListeners.TryGetValue(eventDefinition.Id, out var registeredListeners))
             {
-                registeredListeners = new HashSet<Delegate>();
+                registeredListeners = [];
                 _onceListeners[eventDefinition.Id] = registeredListeners;
             }
 
@@ -140,6 +166,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
 
         lock (_sync)
         {
+            CheckEventPayloadTypeBinding(eventDefinition);
+
             if (handler is null)
             {
                 _listeners.Remove(eventDefinition.Id);
@@ -161,6 +189,9 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
 
         lock (_sync)
         {
+            CheckMatchExpressionPayloadTypeBinding(matchExpression);
+            BindMatchExpressionPayloadType(matchExpression);
+
             if (!_matchListeners.TryGetValue(matchExpression.Id, out var registration))
             {
                 registration = new MatchListenerRegistration(
@@ -181,7 +212,9 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         {
             _listeners.Clear();
             _onceListeners.Clear();
+            _eventPayloadTypes.Clear();
             _matchListeners.Clear();
+            _matchExpressionPayloadTypes.Clear();
         }
 
         Adapter?.Dispose();
@@ -233,6 +266,100 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         {
             registry.Remove(eventId);
         }
+    }
+
+    private void BindEventPayloadType<TPayload>(EventDefinition<TPayload> eventDefinition)
+    {
+        BindPayloadTypeCore(_eventPayloadTypes, eventDefinition.Id, typeof(TPayload));
+    }
+
+    private void BindMatchExpressionPayloadType<TPayload>(MatchExpression<TPayload> matchExpression)
+    {
+        BindPayloadTypeCore(_matchExpressionPayloadTypes, matchExpression.Id, typeof(TPayload));
+    }
+
+
+    private static void BindPayloadTypeCore(
+        IDictionary<string, Type> registry,
+        string id,
+        Type payloadType)
+    {
+        if (!registry.ContainsKey(id))
+        {
+            registry[id] = payloadType;
+        }
+    }
+
+    private void CheckEventPayloadTypeBinding<TPayload>(
+        EventDefinition<TPayload> eventDefinition,
+        [CallerMemberName] string operation = "")
+    {
+        CheckPayloadTypeBindingCore(
+            _eventPayloadTypes,
+            eventDefinition,
+            eventDefinition.Id,
+            typeof(TPayload),
+            operation);
+    }
+
+
+    private void CheckMatchExpressionPayloadTypeBinding<TPayload>(
+        MatchExpression<TPayload> matchExpression,
+        [CallerMemberName] string operation = "")
+    {
+        CheckPayloadTypeBindingCore(
+            _matchExpressionPayloadTypes,
+            matchExpression,
+            matchExpression.Id,
+            typeof(TPayload),
+            operation);
+    }
+
+    private static void CheckPayloadTypeBindingCore<TBinding>(
+        IDictionary<string, Type> registry,
+        TBinding binding,
+        string id,
+        Type currentType,
+        string operation)
+    {
+        if (registry.TryGetValue(id, out var boundType))
+        {
+            if (boundType != currentType)
+            {
+                var bindingTarget = DescribeBindingTarget(binding);
+
+                throw new InvalidOperationException(
+                    $"Cannot perform '{operation}' for {bindingTarget} '{id}' with payload type '{FormatTypeName(currentType)}' " +
+                    $"because this EventContext already bound {bindingTarget} '{id}' to payload type '{FormatTypeName(boundType)}'.");
+            }
+
+            return;
+        }
+    }
+
+    private static string DescribeBindingTarget<TBinding>(TBinding binding)
+    {
+        var bindingType = binding?.GetType() ?? typeof(TBinding);
+        var genericDefinition = bindingType.IsGenericType
+            ? bindingType.GetGenericTypeDefinition()
+            : bindingType;
+
+        if (genericDefinition == typeof(EventDefinition<>))
+        {
+            return nameof(EventDefinition<>);
+        }
+
+        if (genericDefinition == typeof(MatchExpression<>))
+        {
+            return nameof(MatchExpression<>);
+        }
+
+        return genericDefinition.Name;
+    }
+
+    private static string FormatTypeName(Type type)
+    {
+        return type.ToString();
     }
 
     private sealed class MatchListenerRegistration(string id, Func<object, bool> matcher)

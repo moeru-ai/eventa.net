@@ -1,8 +1,21 @@
 namespace Eventa;
 
-public sealed class InvokeInternalConfig
+internal sealed class InvokeInternalConfig
 {
-    public List<EventDefinition<object>> AbortOnEvents { get; } = [];
+    public List<AbortEventRegistration> AbortOnEvents { get; } = [];
+}
 
-    public Func<EventEnvelope<object>, Exception?>? MapAbortError { get; set; }
+internal sealed class AbortEventRegistration(
+    string eventId,
+    Func<IEventContext, Action<Exception?>, IDisposable> subscribe)
+{
+    public string EventId { get; } = eventId;
+
+    public IDisposable Subscribe(IEventContext context, Action<Exception?> onAbort)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(onAbort);
+
+        return subscribe(context, onAbort);
+    }
 }

@@ -19,6 +19,7 @@ public class EventContextTests
     }
 
     [Fact]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "<Pending>")]
     public void On_DeduplicatesTheSameHandlerInstance()
     {
         var context = new EventContext();
@@ -88,6 +89,7 @@ public class EventContextTests
     }
 
     [Fact]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "<Pending>")]
     public void Off_WithHandler_RemovesOnlyTheRequestedListener()
     {
         var context = new EventContext();
@@ -113,6 +115,7 @@ public class EventContextTests
     }
 
     [Fact]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "<Pending>")]
     public void ReturnedSubscription_RemovesOnlyTheRequestedListener()
     {
         var context = new EventContext();
@@ -191,7 +194,207 @@ public class EventContextTests
         Assert.Empty(calls);
     }
 
+    [Fact]
+    public void On_WhenEventIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
+    {
+        var context = new EventContext();
+        var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
+        var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
+
+        using var _ = context.On(firstDefinition, _ => { });
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.On(secondDefinition, _ => { }));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(EventDefinition<>),
+            id: "shared-event",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "On");
+    }
+
+    [Fact]
+    public void Once_WhenEventIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
+    {
+        var context = new EventContext();
+        var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
+        var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
+
+        using var _ = context.Once(firstDefinition, _ => { });
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.Once(secondDefinition, _ => { }));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(EventDefinition<>),
+            id: "shared-event",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "Once");
+    }
+
+    [Fact]
+    public void Emit_WhenEventIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
+    {
+        var context = new EventContext();
+        var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
+        var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
+
+        using var _ = context.On(firstDefinition, _ => { });
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.Emit(secondDefinition, new SecondPayload(2)));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(EventDefinition<>),
+            id: "shared-event",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "Emit");
+    }
+
+    [Fact]
+    public void Emit_FirstUseBindsEventIdPayloadType()
+    {
+        var context = new EventContext();
+        var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
+        var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
+
+        context.Emit(firstDefinition, new FirstPayload("first"));
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.On(secondDefinition, _ => { }));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(EventDefinition<>),
+            id: "shared-event",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "On");
+    }
+
+    [Fact]
+    public void Emit_WithOptions_FirstUseBindsEventIdPayloadType()
+    {
+        var context = new EventContext();
+        var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
+        var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
+
+        context.Emit(firstDefinition, new FirstPayload("first"), new EmitOptions("test"));
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.On(secondDefinition, _ => { }));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(EventDefinition<>),
+            id: "shared-event",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "On");
+    }
+
+    [Fact]
+    public void Off_WhenEventIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
+    {
+        var context = new EventContext();
+        var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
+        var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
+
+        using var _ = context.On(firstDefinition, _ => { });
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.Off(secondDefinition));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(EventDefinition<>),
+            id: "shared-event",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "Off");
+    }
+
+    [Fact]
+    public void Off_DoesNotReleaseEventIdPayloadTypeBinding()
+    {
+        var context = new EventContext();
+        var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
+        var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
+
+        using var _ = context.On(firstDefinition, _ => { });
+
+        context.Off(firstDefinition);
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.On(secondDefinition, _ => { }));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(EventDefinition<>),
+            id: "shared-event",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "On");
+    }
+
+    [Fact]
+    public void EventIdPayloadTypeBinding_IsScopedToEachContext()
+    {
+        var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
+        var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
+        var secondContextCalls = 0;
+
+        using (var firstContext = new EventContext())
+        {
+            using var _ = firstContext.On(firstDefinition, _ => { });
+        }
+
+        using var secondContext = new EventContext();
+        using var __ = secondContext.On(secondDefinition, _ => secondContextCalls++);
+
+        secondContext.Emit(secondDefinition, new SecondPayload(2));
+
+        Assert.Equal(1, secondContextCalls);
+    }
+
+    [Fact]
+    public void On_WhenMatchExpressionIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
+    {
+        var context = new EventContext();
+        var firstExpression = new MatchExpression<FirstPayload>("shared-match", _ => true);
+        var secondExpression = new MatchExpression<SecondPayload>("shared-match", _ => true);
+
+        using var _ = context.On(firstExpression, _ => { });
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.On(secondExpression, _ => { }));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(MatchExpression<>),
+            id: "shared-match",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "On");
+    }
+
+    private static void AssertPayloadTypeInvariant(
+        InvalidOperationException error,
+        string bindingTarget,
+        string id,
+        Type boundType,
+        Type currentType,
+        string operation)
+    {
+        Assert.Contains(bindingTarget, error.Message, StringComparison.Ordinal);
+        Assert.Contains(id, error.Message, StringComparison.Ordinal);
+        Assert.Contains(boundType.ToString(), error.Message, StringComparison.Ordinal);
+        Assert.Contains(currentType.ToString(), error.Message, StringComparison.Ordinal);
+        Assert.Contains(operation, error.Message, StringComparison.Ordinal);
+    }
+
     private sealed record TestPayload(string Value);
+    private sealed record FirstPayload(string Value);
+    private sealed record SecondPayload(int Value);
+    private sealed record EmitOptions(string Source);
 
     private sealed class RecordingAdapter(List<string> calls) : IEventaAdapter
     {
@@ -205,6 +408,8 @@ public class EventContextTests
             calls.Add($"received:{eventId}");
         }
 
+#pragma warning disable CA1822 // Mark members as static
         public void Dispose() { }
+#pragma warning restore CA1822 // Mark members as static
     }
 }

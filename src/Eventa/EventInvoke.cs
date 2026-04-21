@@ -1,11 +1,10 @@
-using System.Reflection;
 using System.Runtime.CompilerServices;
 
 namespace Eventa;
 
 public static class EventInvoke
 {
-    private static readonly ConditionalWeakTable<IEventContext, InvokeHandlerRegistry> HandlerRegistries = new();
+    private static readonly ConditionalWeakTable<IEventContext, InvokeHandlerRegistry> HandlerRegistries = [];
 
     public static Func<TRequest, CancellationToken, Task<TResponse>> DefineInvoke<TResponse, TRequest>(
         IEventContext context,
@@ -111,11 +110,9 @@ public static class EventInvoke
             {
                 foreach (var fatalEvent in internalConfig.AbortOnEvents)
                 {
-                    disposables.Add(context.On(fatalEvent, envelope =>
+                    disposables.Add(fatalEvent.Subscribe(context, error =>
                     {
-                        var error = internalConfig.MapAbortError?.Invoke(envelope)
-                            ?? ExtractAbortException(envelope.Body);
-                        CompleteFaulted(error);
+                        CompleteFaulted(error ?? CreateAbortException());
                     }));
                 }
             }
@@ -413,25 +410,8 @@ public static class EventInvoke
         return false;
     }
 
-    private static Exception ExtractAbortException(object? payload)
+    private static InvalidOperationException CreateAbortException()
     {
-        if (payload is Exception exception)
-        {
-            return exception;
-        }
-
-        if (payload is not null)
-        {
-            var errorProperty = payload
-                .GetType()
-                .GetProperty("Error", BindingFlags.Public | BindingFlags.Instance);
-
-            if (errorProperty?.GetValue(payload) is Exception nestedException)
-            {
-                return nestedException;
-            }
-        }
-
         return new InvalidOperationException("Pending invoke aborted by fatal event.");
     }
 
