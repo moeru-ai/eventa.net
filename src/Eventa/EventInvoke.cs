@@ -343,11 +343,16 @@ public static class EventInvoke
             }),
             context.On(sendStreamEndEvent, envelope =>
             {
+                // Keep empty request streams as a supported C# contract even though they
+                // materialize state for unknown invokeIds. This is not current TypeScript parity.
                 var state = GetOrCreateState(envelope.Body.InvokeId);
                 state.Requests.Complete();
             }),
             context.On(sendAbortEvent, envelope =>
             {
+                // Keep pre-first-item aborts as a supported C# contract even though they
+                // can materialize state for unknown invokeIds so the handler still
+                // observes cancellation. This is not current TypeScript parity.
                 var state = GetOrCreateState(envelope.Body.InvokeId);
                 state.Requests.Fault(new OperationCanceledException(state.CancellationSource.Token));
                 state.CancellationSource.Cancel();

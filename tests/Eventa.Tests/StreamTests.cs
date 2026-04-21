@@ -402,6 +402,72 @@ public class StreamTests
     }
 
     [Fact]
+    public async Task DefineStreamInvokeHandler_CompletesEmptyRequestStreamProtocolMessages()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("sum-stream-empty-protocol");
+        var invokeId = "invoke-empty";
+        var sendStreamEndEvent = new EventDefinition<StreamEndPayload>(definition.SendStreamEndId);
+        var receiveEvent = new EventDefinition<ReceivePayload<int>>(definition.ReceiveEventId);
+        var receiveErrorEvent = new EventDefinition<ReceiveErrorPayload>(definition.ReceiveErrorId);
+        var receiveStreamEndEvent = new EventDefinition<StreamEndPayload>(definition.ReceiveStreamEndId);
+        var response = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var streamEnded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var received = new List<int>();
+        var handlerStarts = 0;
+
+        async IAsyncEnumerable<int> Handler(
+            IAsyncEnumerable<int> request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref handlerStarts);
+
+            await foreach (var value in request.WithCancellation(cancellationToken))
+            {
+                received.Add(value);
+                yield return value;
+            }
+
+            yield return 0;
+        }
+
+        using var _ = context.On(receiveEvent, envelope =>
+        {
+            if (envelope.Body.InvokeId == invokeId)
+            {
+                response.TrySetResult(envelope.Body);
+            }
+        });
+        using var __ = context.On(receiveErrorEvent, envelope =>
+        {
+            if (envelope.Body.InvokeId == invokeId)
+            {
+                response.TrySetException(envelope.Body.Error);
+            }
+        });
+        using var ___ = context.On(receiveStreamEndEvent, envelope =>
+        {
+            if (envelope.Body.InvokeId == invokeId)
+            {
+                streamEnded.TrySetResult(true);
+            }
+        });
+        using var ____ = EventStream.DefineStreamInvokeHandler(
+            context,
+            definition,
+            Handler);
+
+        context.Emit(sendStreamEndEvent, new StreamEndPayload(invokeId));
+
+        var result = await response.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await streamEnded.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, Volatile.Read(ref handlerStarts));
+        Assert.Empty(received);
+        Assert.Equal(new ReceivePayload<int>(invokeId, 0), result);
+    }
+
+    [Fact]
     public async Task DefineStreamInvoke_AbortsRequestStreamAndNotifiesHandler()
     {
         var context = new EventContext();
