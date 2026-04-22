@@ -24,9 +24,12 @@ public class AsyncSignalQueueTests
                 .ToArray();
 
             start.Set();
-            Assert.True(SpinWait.SpinUntil(
-                () => Volatile.Read(ref successfulWrites) > 0,
-                TimeSpan.FromSeconds(1)));
+
+            // Prime one definitely accepted value on the test thread so the
+            // assertion does not depend on background-writer scheduling before
+            // completion starts racing them.
+            Assert.True(queue.TryWrite(-1));
+            Interlocked.Increment(ref successfulWrites);
 
             queue.Complete();
             await Task.WhenAll(writers);

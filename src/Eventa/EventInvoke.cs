@@ -6,6 +6,8 @@ public static class EventInvoke
 {
     private static readonly ConditionalWeakTable<IEventContext, InvokeHandlerRegistry> HandlerRegistries = [];
 
+    // Client invoke API
+
     public static Func<TRequest, CancellationToken, Task<TResponse>> DefineInvoke<TResponse, TRequest>(
         IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition)
@@ -24,117 +26,14 @@ public static class EventInvoke
         ArgumentNullException.ThrowIfNull(eventDefinition);
 
         return (request, cancellationToken) =>
-        {
-            var context = contextFactory();
-            var invokeId = IdGenerator.New();
-            var sendEvent = new EventDefinition<SendPayload<TRequest>>(eventDefinition.SendEventId);
-            var sendAbortEvent = new EventDefinition<AbortPayload>(eventDefinition.SendAbortId);
-            var receiveEvent = new EventDefinition<ReceivePayload<TResponse>>(eventDefinition.ReceiveEventId);
-            var receiveErrorEvent = new EventDefinition<ReceiveErrorPayload>(eventDefinition.ReceiveErrorId);
-            var completion = new TaskCompletionSource<TResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var disposables = new List<IDisposable>();
-            var finished = 0;
-
-            void Cleanup()
-            {
-                foreach (var disposable in disposables)
-                {
-                    disposable.Dispose();
-                }
-            }
-
-            void CompleteSuccessfully(TResponse response)
-            {
-                if (Interlocked.Exchange(ref finished, 1) != 0) return;
-
-                completion.TrySetResult(response);
-                Cleanup();
-            }
-
-            void CompleteFaulted(Exception error)
-            {
-                if (Interlocked.Exchange(ref finished, 1) != 0) return;
-
-                completion.TrySetException(error);
-                Cleanup();
-            }
-
-            void FinishCanceled(bool emitAbort)
-            {
-                if (Interlocked.Exchange(ref finished, 1) != 0) return;
-
-                if (emitAbort)
-                {
-                    context.Emit(sendAbortEvent, new AbortPayload(invokeId));
-                }
-
-                completion.TrySetCanceled(cancellationToken);
-                Cleanup();
-            }
-
-            void AbortFromClient()
-            {
-                FinishCanceled(emitAbort: true);
-            }
-
-            bool TryArmClientCancellation()
-            {
-                if (!cancellationToken.CanBeCanceled) return true;
-
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    AbortFromClient();
-                    return false;
-                }
-
-                var cancellationRegistration = new DeferredCancellationRegistration();
-                disposables.Add(cancellationRegistration);
-                cancellationRegistration.Attach(cancellationToken.Register(AbortFromClient));
-
-                // Cancellation can still win the race between the pre-check and Register.
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    AbortFromClient();
-                    return false;
-                }
-
-                return true;
-            }
-
-            disposables.Add(context.On(receiveEvent, envelope =>
-            {
-                if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId)) return;
-
-                CompleteSuccessfully(envelope.Body.Content);
-            }));
-
-            disposables.Add(context.On(receiveErrorEvent, envelope =>
-            {
-                if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId)) return;
-
-                CompleteFaulted(envelope.Body.Error);
-            }));
-
-            if (TryGetInvokeInternalConfig(context, out var internalConfig))
-            {
-                foreach (var fatalEvent in internalConfig.AbortOnEvents)
-                {
-                    disposables.Add(fatalEvent.Subscribe(context, error =>
-                    {
-                        CompleteFaulted(error ?? CreateAbortException());
-                    }));
-                }
-            }
-
-            if (!TryArmClientCancellation())
-            {
-                return completion.Task;
-            }
-
-            context.Emit(sendEvent, new SendPayload<TRequest>(invokeId, request));
-            return completion.Task;
-        };
+            new PendingInvokeOperation<TResponse, TRequest>(
+                contextFactory(),
+                new InvokeEventBindings<TResponse, TRequest>(eventDefinition),
+                request,
+                cancellationToken).Run();
     }
+
+    // Handler registration API
 
     public static IDisposable DefineInvokeHandler<TResponse, TRequest>(
         IEventContext context,
@@ -145,24 +44,12 @@ public static class EventInvoke
         ArgumentNullException.ThrowIfNull(eventDefinition);
         ArgumentNullException.ThrowIfNull(handler);
 
-        var registry = HandlerRegistries.GetValue(context, static _ => new InvokeHandlerRegistry());
-
-        lock (registry.SyncRoot)
-        {
-            if (!registry.Registrations.TryGetValue(eventDefinition.SendEventId, out var handlers))
-            {
-                handlers = [];
-                registry.Registrations[eventDefinition.SendEventId] = handlers;
-            }
-
-            if (!handlers.TryGetValue(handler, out HandlerRegistration? registration))
-            {
-                registration = CreateUnaryHandlerRegistration(context, eventDefinition, handler);
-                handlers[handler] = registration;
-            }
-        }
-
-        return new ActionDisposable(() => RemoveHandlerRegistration(registry, eventDefinition.SendEventId, handler));
+        return HandlerRegistries
+            .GetValue(context, static _ => new InvokeHandlerRegistry())
+            .Register(
+                eventDefinition.SendEventId,
+                handler,
+                () => CreateUnaryHandlerRegistration(context, eventDefinition, handler));
     }
 
     public static IDisposable DefineInvokeHandler<TResponse, TRequest>(
@@ -174,102 +61,61 @@ public static class EventInvoke
         ArgumentNullException.ThrowIfNull(eventDefinition);
         ArgumentNullException.ThrowIfNull(handler);
 
-        var registry = HandlerRegistries.GetValue(context, static _ => new InvokeHandlerRegistry());
-
-        lock (registry.SyncRoot)
-        {
-            if (!registry.Registrations.TryGetValue(eventDefinition.SendEventId, out var handlers))
-            {
-                handlers = [];
-                registry.Registrations[eventDefinition.SendEventId] = handlers;
-            }
-
-            if (!handlers.TryGetValue(handler, out HandlerRegistration? registration))
-            {
-                registration = CreateRequestStreamHandlerRegistration(context, eventDefinition, handler);
-                handlers[handler] = registration;
-            }
-        }
-
-        return new ActionDisposable(() => RemoveHandlerRegistration(registry, eventDefinition.SendEventId, handler));
+        return HandlerRegistries
+            .GetValue(context, static _ => new InvokeHandlerRegistry())
+            .Register(
+                eventDefinition.SendEventId,
+                handler,
+                () => CreateRequestStreamHandlerRegistration(context, eventDefinition, handler));
     }
+
+    // Handler registration
 
     private static HandlerRegistration CreateUnaryHandlerRegistration<TResponse, TRequest>(
         IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
         Func<TRequest, CancellationToken, Task<TResponse>> handler)
     {
-        var sendEvent = new EventDefinition<SendPayload<TRequest>>(eventDefinition.SendEventId);
-        var sendAbortEvent = new EventDefinition<AbortPayload>(eventDefinition.SendAbortId);
-        var receiveEvent = new EventDefinition<ReceivePayload<TResponse>>(eventDefinition.ReceiveEventId);
-        var receiveErrorEvent = new EventDefinition<ReceiveErrorPayload>(eventDefinition.ReceiveErrorId);
-        var sync = new object();
-        var inflight = new Dictionary<string, CancellationTokenSource>(StringComparer.Ordinal);
+        var events = new InvokeEventBindings<TResponse, TRequest>(eventDefinition);
+        var inflight = new InvocationCancellationTracker();
 
         async Task HandleInvokeAsync(string invokeId, TRequest request)
         {
-            var cancellationSource = new CancellationTokenSource();
-
-            lock (sync)
-            {
-                inflight[invokeId] = cancellationSource;
-            }
+            var cancellationSource = inflight.BeginTracking(invokeId);
 
             try
             {
+                // Skip handler activation entirely when abort won before startup.
+                if (cancellationSource.IsCancellationRequested) return;
+
                 var response = await handler(request, cancellationSource.Token).ConfigureAwait(false);
-                if (!cancellationSource.IsCancellationRequested)
-                {
-                    context.Emit(receiveEvent, new ReceivePayload<TResponse>(invokeId, response));
-                }
+
+                // Cancellation can still win while the handler is awaiting.
+                if (cancellationSource.IsCancellationRequested) return;
+
+                context.Emit(events.Receive, new ReceivePayload<TResponse>(invokeId, response));
             }
             catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested) { return; }
             catch (Exception error)
             {
-                if (!cancellationSource.IsCancellationRequested)
-                {
-                    context.Emit(receiveErrorEvent, new ReceiveErrorPayload(invokeId, error));
-                }
+                if (cancellationSource.IsCancellationRequested) return;
+
+                context.Emit(events.ReceiveError, new ReceiveErrorPayload(invokeId, error));
             }
             finally
             {
-                lock (sync)
-                {
-                    inflight.Remove(invokeId);
-                }
-
+                inflight.StopTracking(invokeId);
                 cancellationSource.Dispose();
             }
         }
 
         var subscriptions = new List<IDisposable>
         {
-            context.On(sendEvent, envelope => _ = HandleInvokeAsync(envelope.Body.InvokeId, envelope.Body.Content)),
-            context.On(sendAbortEvent, envelope =>
-            {
-                lock (sync)
-                {
-                    if (inflight.TryGetValue(envelope.Body.InvokeId, out var cancellationSource))
-                    {
-                        cancellationSource.Cancel();
-                    }
-                }
-            }),
+            context.On(events.Send, envelope => _ = HandleInvokeAsync(envelope.Body.InvokeId, envelope.Body.Content)),
+            context.On(events.SendAbort, envelope => inflight.TryCancel(envelope.Body.InvokeId)),
         };
 
-        return new HandlerRegistration(subscriptions, () =>
-        {
-            lock (sync)
-            {
-                foreach (var cancellationSource in inflight.Values)
-                {
-                    cancellationSource.Cancel();
-                    cancellationSource.Dispose();
-                }
-
-                inflight.Clear();
-            }
-        });
+        return new HandlerRegistration(subscriptions, inflight.CancelAllAndDispose);
     }
 
     private static HandlerRegistration CreateRequestStreamHandlerRegistration<TResponse, TRequest>(
@@ -277,119 +123,184 @@ public static class EventInvoke
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
         Func<IAsyncEnumerable<TRequest>, CancellationToken, Task<TResponse>> handler)
     {
-        var sendEvent = new EventDefinition<SendPayload<TRequest>>(eventDefinition.SendEventId);
-        var sendStreamEndEvent = new EventDefinition<StreamEndPayload>(eventDefinition.SendStreamEndId);
-        var sendAbortEvent = new EventDefinition<AbortPayload>(eventDefinition.SendAbortId);
-        var receiveEvent = new EventDefinition<ReceivePayload<TResponse>>(eventDefinition.ReceiveEventId);
-        var receiveErrorEvent = new EventDefinition<ReceiveErrorPayload>(eventDefinition.ReceiveErrorId);
-        var sync = new object();
-        var inflight = new Dictionary<string, RequestStreamInvocationState<TRequest>>(StringComparer.Ordinal);
+        var events = new InvokeEventBindings<TResponse, TRequest>(eventDefinition);
+        var inflight = new RequestStreamInvocationTracker<TRequest>();
 
         RequestStreamInvocationState<TRequest> GetOrCreateState(string invokeId)
         {
-            lock (sync)
-            {
-                if (inflight.TryGetValue(invokeId, out var existing)) return existing;
-
-                var created = new RequestStreamInvocationState<TRequest>(invokeId);
-                inflight[invokeId] = created;
-                created.Execution = HandleInvokeAsync(created);
-                return created;
-            }
+            return inflight.GetOrCreate(invokeId, HandleInvokeAsync);
         }
 
         async Task HandleInvokeAsync(RequestStreamInvocationState<TRequest> state)
         {
             try
             {
+                // Skip handler activation entirely when abort won before startup.
+                if (state.CancellationSource.IsCancellationRequested) return;
+
                 var response = await handler(
                     state.Requests.ReadAll(respectConsumerCancellation: false),
                     state.CancellationSource.Token).ConfigureAwait(false);
 
+                // Cancellation can still win while the handler is awaiting.
                 if (state.CancellationSource.IsCancellationRequested) return;
 
-                context.Emit(receiveEvent, new ReceivePayload<TResponse>(state.InvokeId, response));
+                context.Emit(events.Receive, new ReceivePayload<TResponse>(state.InvokeId, response));
             }
             catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested) { return; }
             catch (Exception error)
             {
                 if (state.CancellationSource.IsCancellationRequested) return;
 
-                context.Emit(receiveErrorEvent, new ReceiveErrorPayload(state.InvokeId, error));
+                context.Emit(events.ReceiveError, new ReceiveErrorPayload(state.InvokeId, error));
             }
             finally
             {
-                lock (sync)
-                {
-                    inflight.Remove(state.InvokeId);
-                }
-
-                state.CancellationSource.Dispose();
+                inflight.Remove(state);
+                state.Dispose();
             }
         }
 
         var subscriptions = new List<IDisposable>
         {
-            context.On(sendEvent, envelope =>
+            context.On(events.Send, envelope =>
             {
-                var state = GetOrCreateState(envelope.Body.InvokeId);
-                state.Requests.TryWrite(envelope.Body.Content);
+                GetOrCreateState(envelope.Body.InvokeId).Requests.TryWrite(envelope.Body.Content);
             }),
-            context.On(sendStreamEndEvent, envelope =>
+            context.On(events.SendStreamEnd, envelope =>
             {
                 // Keep empty request streams as a supported C# contract; current
                 // TypeScript invoke.ts also materializes unknown invokeIds here.
-                var state = GetOrCreateState(envelope.Body.InvokeId);
-                state.Requests.Complete();
+                GetOrCreateState(envelope.Body.InvokeId).Requests.Complete();
             }),
-            context.On(sendAbortEvent, envelope =>
+            context.On(events.SendAbort, envelope =>
             {
                 // Keep pre-first-item aborts as a supported C# contract; current
                 // TypeScript invoke.ts also materializes unknown invokeIds on abort
                 // so the handler still observes cancellation.
-                var state = GetOrCreateState(envelope.Body.InvokeId);
-                state.Requests.Fault(new OperationCanceledException(state.CancellationSource.Token));
-                state.CancellationSource.Cancel();
+                GetOrCreateState(envelope.Body.InvokeId).Abort();
             }),
         };
 
-        return new HandlerRegistration(subscriptions, () =>
-        {
-            lock (sync)
-            {
-                foreach (var state in inflight.Values)
-                {
-                    state.Requests.Fault(new OperationCanceledException(state.CancellationSource.Token));
-                    state.CancellationSource.Cancel();
-                    state.CancellationSource.Dispose();
-                }
-
-                inflight.Clear();
-            }
-        });
+        return new HandlerRegistration(subscriptions, inflight.AbortAllAndDispose);
     }
 
-    private static void RemoveHandlerRegistration(
-        InvokeHandlerRegistry registry,
-        string eventId,
-        Delegate handler)
+    // Client operation
+
+    private sealed class PendingInvokeOperation<TResponse, TRequest>(
+        IEventContext context,
+        InvokeEventBindings<TResponse, TRequest> events,
+        TRequest request,
+        CancellationToken cancellationToken)
     {
-        HandlerRegistration? registration = null;
+        private readonly string _invokeId = IdGenerator.New();
+        private readonly TaskCompletionSource<TResponse> _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly List<IDisposable> _subscriptions = [];
+        private int _finished;
 
-        lock (registry.SyncRoot)
+        public Task<TResponse> Run()
         {
-            if (!registry.Registrations.TryGetValue(eventId, out var handlers)
-                || !handlers.TryGetValue(handler, out registration)) return;
+            SubscribeToResponses();
+            SubscribeToFatalEvents();
 
-            handlers.Remove(handler);
-            if (handlers.Count == 0)
+            if (!ClientCancellation.TryArm(cancellationToken, _subscriptions, AbortFromClient))
             {
-                registry.Registrations.Remove(eventId);
+                return _completion.Task;
+            }
+
+            EmitRequest();
+            return _completion.Task;
+        }
+
+        private void SubscribeToResponses()
+        {
+            _subscriptions.Add(context.On(events.Receive, envelope =>
+            {
+                if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, _invokeId)) return;
+
+                CompleteSuccessfully(envelope.Body.Content);
+            }));
+
+            _subscriptions.Add(context.On(events.ReceiveError, envelope =>
+            {
+                if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, _invokeId)) return;
+
+                CompleteFaulted(envelope.Body.Error);
+            }));
+        }
+
+        private void SubscribeToFatalEvents()
+        {
+            if (!TryGetInvokeInternalConfig(context, out var internalConfig)) return;
+
+            foreach (var fatalEvent in internalConfig.AbortOnEvents)
+            {
+                _subscriptions.Add(fatalEvent.Subscribe(context, error =>
+                {
+                    CompleteFaulted(error ?? CreateAbortException());
+                }));
             }
         }
 
-        registration.Dispose();
+        private void EmitRequest()
+        {
+            // Fatal events can finish the invoke after subscriptions are armed but before send.
+            if (Volatile.Read(ref _finished) != 0) return;
+
+            // Cancellation can still win after TryArm returns; route it through the abort path.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                AbortFromClient();
+                return;
+            }
+
+            context.Emit(events.Send, new SendPayload<TRequest>(_invokeId, request));
+        }
+
+        private void Cleanup()
+        {
+            foreach (var subscription in _subscriptions)
+            {
+                subscription.Dispose();
+            }
+        }
+
+        private void CompleteSuccessfully(TResponse response)
+        {
+            Finish(emitAbort: false, () => _completion.TrySetResult(response));
+        }
+
+        private void CompleteFaulted(Exception error)
+        {
+            Finish(emitAbort: false, () => _completion.TrySetException(error));
+        }
+
+        private void FinishCanceled(bool emitAbort)
+        {
+            Finish(emitAbort, () => _completion.TrySetCanceled(cancellationToken));
+        }
+
+        private void Finish(bool emitAbort, Action complete)
+        {
+            if (Interlocked.Exchange(ref _finished, 1) != 0) return;
+
+            if (emitAbort)
+            {
+                context.Emit(events.SendAbort, new AbortPayload(_invokeId));
+            }
+
+            complete();
+            Cleanup();
+        }
+
+        private void AbortFromClient()
+        {
+            FinishCanceled(emitAbort: true);
+        }
     }
+
+    // Support
 
     private static bool TryGetInvokeInternalConfig(IEventContext context, out InvokeInternalConfig config)
     {
@@ -411,39 +322,50 @@ public static class EventInvoke
 
     private sealed class InvokeHandlerRegistry
     {
-        public object SyncRoot { get; } = new();
-
-        public Dictionary<string, Dictionary<Delegate, HandlerRegistration>> Registrations { get; } =
+        private readonly Lock _sync = new();
+        private readonly Dictionary<string, Dictionary<Delegate, HandlerRegistration>> _registrations =
             new(StringComparer.Ordinal);
-    }
 
-    private sealed class HandlerRegistration(
-        IReadOnlyCollection<IDisposable> subscriptions,
-        Action cleanup)
-    {
-        private int _disposed;
-
-        public void Dispose()
+        public IDisposable Register(
+            string eventId,
+            Delegate handler,
+            Func<HandlerRegistration> createRegistration)
         {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-
-            foreach (var subscription in subscriptions)
+            lock (_sync)
             {
-                subscription.Dispose();
+                if (!_registrations.TryGetValue(eventId, out var handlers))
+                {
+                    handlers = [];
+                    _registrations[eventId] = handlers;
+                }
+
+                if (!handlers.TryGetValue(handler, out HandlerRegistration? registration))
+                {
+                    registration = createRegistration();
+                    handlers[handler] = registration;
+                }
             }
 
-            cleanup();
+            return new ActionDisposable(() => Remove(eventId, handler));
         }
-    }
 
-    private sealed class RequestStreamInvocationState<TRequest>(string invokeId)
-    {
-        public string InvokeId { get; } = invokeId;
+        private void Remove(string eventId, Delegate handler)
+        {
+            HandlerRegistration? registration = null;
 
-        public AsyncSignalQueue<TRequest> Requests { get; } = new();
+            lock (_sync)
+            {
+                if (!_registrations.TryGetValue(eventId, out var handlers)
+                    || !handlers.TryGetValue(handler, out registration)) return;
 
-        public CancellationTokenSource CancellationSource { get; } = new();
+                handlers.Remove(handler);
+                if (handlers.Count == 0)
+                {
+                    _registrations.Remove(eventId);
+                }
+            }
 
-        public Task? Execution { get; set; }
+            registration.Dispose();
+        }
     }
 }

@@ -27,7 +27,7 @@ Current C# target: `InvokeTests.cs`
 - Covered: request-response, sync lazy context, request-derived error message, exact error instance propagation, abort/cancel with handler notification, concurrent invokes, same handler once, returned handler removal.
 - Adapted: request-stream input and request-stream abort are currently covered at the protocol/handler layer because C# has no public client invoke overload for request streams.
 - Extra C# contract within that adapted coverage: empty request streams are accepted by materializing handler state on `sendStreamEndEvent`, and pre-first-item abort still notifies the handler.
-- Extra C# contract outside doc 2.2: a pre-canceled client token emits a single abort without sending the request, and late cancellation after the response wins the race does not emit a redundant abort.
+- Extra C# contract outside doc 2.2: a pre-canceled client token emits a single abort without sending the request, fatal-event completion can also win before request emit so the invoke faults without sending the request, and late cancellation after the response wins the race does not emit a redundant abort.
 - Parity note: current TypeScript `invoke.ts` also materializes unknown `invokeId` values on `sendEventStreamEnd` and `sendEventAbort` for request-stream handlers.
 - Deferred: async lazy context, `undefineInvokeHandler()` (specific + all handlers), batch registration, public client-side request stream invoke parity.
 
@@ -41,6 +41,7 @@ Current C# target: `StreamTests.cs`
 - Extra C# contract: in bidirectional request streams, disposing the response async enumerator or letting the handler complete the response stream early cancels the outbound request producer and prevents late request items or accidental reinvocation.
 - Extra C# contract: a pre-canceled client token emits a single abort without sending the unary request payload, and a pre-canceled request-stream invoke does not enumerate the outbound request source at all.
 - Extra C# contract: a unary stream invoke that is disposed before its queued send could run does not leave a late-starting handler behind; once client cleanup wins, the initial unary send must not be deferred past that cleanup boundary.
+- Extra C# contract: a request-stream invoke that is disposed before its queued send starts does not enumerate the outbound request source, does not emit any request item, and emits only the client abort.
 - Extra C# contract: request producers can safely register a cancellation callback after client cancellation has already happened; the late registration is invoked without throwing.
 - Parity note: current TypeScript `stream.ts` still materializes state on unknown-id abort so the handler can observe cancellation.
 
@@ -63,7 +64,7 @@ Current C# target: none
 Status: `covered` + `adapted` + `extra`
 Current C# target: `InvokeExtensionsTests.cs`
 
-- Covered: pending invokes are rejected when the fatal event fires.
+- Covered: pending invokes are rejected when the fatal event fires, including the case where the fatal event completes the invoke before the client request is emitted.
 - Adapted: the TS `{ error }` payload pattern maps to C# via `RegisterAbortEvent<TPayload>(..., mapError)`, which can preserve the exact exception instance from a typed fatal-event payload.
 - Extra C# contract: `RegisterAbortEvent(EventDefinition<object>)` also preserves the exact exception instance when the fatal-event payload is itself an `Exception`.
 - Extra C# contract: if the mapper returns `null` or the object payload is not an `Exception`, pending invokes fault with the default `InvalidOperationException("Pending invoke aborted by fatal event.")`.
