@@ -178,6 +178,61 @@ public class StreamTests
     }
 
     [Fact]
+    public async Task DefineStreamInvoke_WithPreCanceledToken_EmitsAbortOnlyOnce_WithoutSendingRequest()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<string, string>("pre-canceled-stream");
+        var sendEvent = new EventDefinition<SendPayload<string>>(definition.SendEventId);
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var sendCount = 0;
+        var abortCount = 0;
+
+        using var _ = context.On(sendEvent, _ => sendCount++);
+        using var __ = context.On(sendAbortEvent, _ => abortCount++);
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+
+        var stream = EventStream.DefineStreamInvoke(context, definition, "hello", cancellationSource.Token);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => DrainAsync(stream));
+
+        Assert.Equal(0, sendCount);
+        Assert.Equal(1, abortCount);
+    }
+
+    [Fact]
+    public async Task DefineStreamInvoke_WithPreCanceledToken_DoesNotEnumerateRequestStreamInput()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("pre-canceled-request-stream");
+        var sendEvent = new EventDefinition<SendPayload<int>>(definition.SendEventId);
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var requestEnumerationCount = 0;
+        var sendCount = 0;
+        var abortCount = 0;
+
+        async IAsyncEnumerable<int> Requests()
+        {
+            requestEnumerationCount++;
+            await Task.Yield();
+            yield return 1;
+        }
+
+        using var _ = context.On(sendEvent, _ => sendCount++);
+        using var __ = context.On(sendAbortEvent, _ => abortCount++);
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+
+        var stream = EventStream.DefineStreamInvoke(context, definition, Requests(), cancellationSource.Token);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => DrainAsync(stream));
+
+        Assert.Equal(0, requestEnumerationCount);
+        Assert.Equal(0, sendCount);
+        Assert.Equal(1, abortCount);
+    }
+
+    [Fact]
     public async Task DisposingAsyncEnumerator_NotifiesTheStreamHandler()
     {
         var context = new EventContext();

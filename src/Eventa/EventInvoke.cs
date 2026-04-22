@@ -86,6 +86,33 @@ public static class EventInvoke
                 FinishCanceled(emitAbort: true);
             }
 
+            bool TryArmClientCancellation()
+            {
+                if (!cancellationToken.CanBeCanceled)
+                {
+                    return true;
+                }
+
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    AbortFromClient();
+                    return false;
+                }
+
+                var cancellationRegistration = new DeferredCancellationRegistration();
+                disposables.Add(cancellationRegistration);
+                cancellationRegistration.Attach(cancellationToken.Register(AbortFromClient));
+
+                // Cancellation can still win the race between the pre-check and Register.
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    AbortFromClient();
+                    return false;
+                }
+
+                return true;
+            }
+
             disposables.Add(context.On(receiveEvent, envelope =>
             {
                 if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId))
@@ -117,16 +144,9 @@ public static class EventInvoke
                 }
             }
 
-            if (cancellationToken.CanBeCanceled)
+            if (!TryArmClientCancellation())
             {
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    AbortFromClient();
-                    return completion.Task;
-                }
-
-                var registration = cancellationToken.Register(AbortFromClient);
-                disposables.Add(new ActionDisposable(registration.Dispose));
+                return completion.Task;
             }
 
             context.Emit(sendEvent, new SendPayload<TRequest>(invokeId, request));

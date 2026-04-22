@@ -179,6 +179,52 @@ public class EventContextTests
     }
 
     [Fact]
+    public void Emit_CallsAdapterWithEventEnvelopePayloads()
+    {
+        var calls = new List<string>();
+        using var adapter = new RecordingAdapter(calls);
+        using var context = new EventContext(adapter);
+        var definition = new EventDefinition<TestPayload>("test-event");
+
+        using var _ = context.On(definition, _ => { });
+
+        context.Emit(definition, new TestPayload("test"));
+
+        var received = Assert.Single(adapter.ReceivedCalls);
+        Assert.Equal("test-event", received.EventId);
+        Assert.Equal(
+            new EventEnvelope<TestPayload>("test-event", new TestPayload("test")),
+            Assert.IsType<EventEnvelope<TestPayload>>(received.Envelope));
+
+        var sent = Assert.Single(adapter.SentCalls);
+        Assert.Equal("test-event", sent.EventId);
+        Assert.Equal(
+            new EventEnvelope<TestPayload>("test-event", new TestPayload("test")),
+            Assert.IsType<EventEnvelope<TestPayload>>(sent.Envelope));
+    }
+
+    [Fact]
+    public void Emit_WithMatchExpression_CallsAdapterOnReceivedWithMatchId_AndEnvelopeKeepsOriginalEventId()
+    {
+        var calls = new List<string>();
+        using var adapter = new RecordingAdapter(calls);
+        using var context = new EventContext(adapter);
+        var definition = new EventDefinition<TestPayload>("test-event");
+        var expression = new MatchExpression<TestPayload>("match-test-event", _ => true);
+
+        using var _ = context.On(expression, _ => { });
+
+        context.Emit(definition, new TestPayload("test"));
+
+        var received = Assert.Single(adapter.ReceivedCalls);
+        Assert.Equal("match-test-event", received.EventId);
+
+        var envelope = Assert.IsType<EventEnvelope<TestPayload>>(received.Envelope);
+        Assert.Equal("test-event", envelope.EventId);
+        Assert.Equal(new TestPayload("test"), envelope.Body);
+    }
+
+    [Fact]
     public void Emit_WhenListenerThrows_DoesNotCallAdapterOnSent()
     {
         var calls = new List<string>();
@@ -395,16 +441,24 @@ public class EventContextTests
     private sealed record FirstPayload(string Value);
     private sealed record SecondPayload(int Value);
     private sealed record EmitOptions(string Source);
+    private sealed record AdapterSentCall(string EventId, object? Envelope, object? Options);
+    private sealed record AdapterReceivedCall(string EventId, object? Envelope);
 
     private sealed class RecordingAdapter(List<string> calls) : IEventaAdapter
     {
-        public void OnSent(string eventId, object? _, object? __ = null)
+        public List<AdapterSentCall> SentCalls { get; } = [];
+
+        public List<AdapterReceivedCall> ReceivedCalls { get; } = [];
+
+        public void OnSent(string eventId, object? envelope, object? options = null)
         {
+            SentCalls.Add(new AdapterSentCall(eventId, envelope, options));
             calls.Add($"sent:{eventId}");
         }
 
-        public void OnReceived(string eventId, object? _)
+        public void OnReceived(string eventId, object? envelope)
         {
+            ReceivedCalls.Add(new AdapterReceivedCall(eventId, envelope));
             calls.Add($"received:{eventId}");
         }
 

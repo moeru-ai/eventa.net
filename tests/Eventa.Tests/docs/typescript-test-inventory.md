@@ -16,7 +16,7 @@ Current C# target: `EventContextTests.cs`
 
 - Covers register+emit, same handler only once, once listeners, `off(event)`, returned disposer, `off(event, handler)`, and returned disposer for a specific listener.
 - Extra C# contract: `MatchExpression` subscriptions are integrated into `EventContext` dispatch and only receive matching payloads.
-- Extra C# contract: adapter-aware contexts surface local and match-expression dispatches through `IEventaAdapter.OnReceived`, call `OnSent` only after local processing completes, and skip `OnSent` entirely if a local listener throws.
+- Extra C# contract: adapter-aware contexts surface local and match-expression dispatches through `IEventaAdapter.OnReceived` using `EventEnvelope<TPayload>` values, preserve the original event id in `envelope.EventId` even when `eventId` is a match-expression id, call `OnSent` only after local processing completes, and skip `OnSent` entirely if a local listener throws.
 - Extra C# contract: the default `EventContext` fails fast if one `EventDefinition.Id` or `MatchExpression.Id` is reused with a different payload type inside the same context; first use via `On`, `Once`, or either `Emit` overload establishes that binding, `off(event)` does not release it, and only a different `EventContext` can rebind the same identifier.
 
 ### `invoke.spec.ts`
@@ -27,7 +27,7 @@ Current C# target: `InvokeTests.cs`
 - Covered: request-response, sync lazy context, request-derived error message, exact error instance propagation, abort/cancel with handler notification, concurrent invokes, same handler once, returned handler removal.
 - Adapted: request-stream input and request-stream abort are currently covered at the protocol/handler layer because C# has no public client invoke overload for request streams.
 - Extra C# contract within that adapted coverage: empty request streams are accepted by materializing handler state on `sendStreamEndEvent`, and pre-first-item abort still notifies the handler.
-- Extra C# contract outside doc 2.2: a pre-canceled client token emits a single abort, and late cancellation after the response wins the race does not emit a redundant abort.
+- Extra C# contract outside doc 2.2: a pre-canceled client token emits a single abort without sending the request, and late cancellation after the response wins the race does not emit a redundant abort.
 - Parity note: current TypeScript `invoke.ts` also materializes unknown `invokeId` values on `sendEventStreamEnd` and `sendEventAbort` for request-stream handlers.
 - Deferred: async lazy context, `undefineInvokeHandler()` (specific + all handlers), batch registration, public client-side request stream invoke parity.
 
@@ -39,6 +39,7 @@ Current C# target: `StreamTests.cs`
 - Covered: server-streaming, `ToStreamHandler`, concurrent streams, error surfacing, abort stream, cancel stream via async enumerator disposal, abort request stream with paced input, abort request stream before first item, request stream input, `ToStreamHandler` + stream input.
 - Extra C# contract: empty request streams are intentionally supported both through the public `IAsyncEnumerable<TRequest>` input path and at the protocol layer by materializing a handler when `sendEventStreamEnd` arrives before the first item, even though current TypeScript `stream.ts` ignores `sendEventStreamEnd` for unknown `invokeId`.
 - Extra C# contract: in bidirectional request streams, disposing the response async enumerator or letting the handler complete the response stream early cancels the outbound request producer and prevents late request items or accidental reinvocation.
+- Extra C# contract: a pre-canceled client token emits a single abort without sending the unary request payload, and a pre-canceled request-stream invoke does not enumerate the outbound request source at all.
 - Extra C# contract: request producers can safely register a cancellation callback after client cancellation has already happened; the late registration is invoked without throwing.
 - Parity note: current TypeScript `stream.ts` still materializes state on unknown-id abort so the handler can observe cancellation.
 

@@ -114,10 +114,13 @@ public class InvokeTests
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<string, string>("pre-canceled");
+        var sendEvent = new EventDefinition<SendPayload<string>>(definition.SendEventId);
         var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var sendCount = 0;
         var abortCount = 0;
 
-        using var _ = context.On(sendAbortEvent, _ => abortCount++);
+        using var _ = context.On(sendEvent, _ => sendCount++);
+        using var __ = context.On(sendAbortEvent, _ => abortCount++);
 
         var invoke = EventInvoke.DefineInvoke(context, definition);
         using var cancellationSource = new CancellationTokenSource();
@@ -126,6 +129,7 @@ public class InvokeTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             async () => await invoke("request", cancellationSource.Token));
 
+        Assert.Equal(0, sendCount);
         Assert.Equal(1, abortCount);
     }
 

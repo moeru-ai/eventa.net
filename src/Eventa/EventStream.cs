@@ -380,6 +380,38 @@ public static class EventStream
             Finish(error, emitAbort: false);
         }
 
+        void AbortFromClient()
+        {
+            AbortWithCompletion(new OperationCanceledException(cancellationToken));
+        }
+
+        bool TryArmClientCancellation()
+        {
+            if (!cancellationToken.CanBeCanceled)
+            {
+                return true;
+            }
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                AbortFromClient();
+                return false;
+            }
+
+            var cancellationRegistration = new DeferredCancellationRegistration();
+            subscriptions.Add(cancellationRegistration);
+            cancellationRegistration.Attach(cancellationToken.Register(AbortFromClient));
+
+            // Cancellation can still win the race between the pre-check and Register.
+            if (cancellationToken.IsCancellationRequested)
+            {
+                AbortFromClient();
+                return false;
+            }
+
+            return true;
+        }
+
         void AbortWithCompletion(Exception? error)
         {
             Finish(error, emitAbort: true);
@@ -415,17 +447,9 @@ public static class EventStream
             Complete();
         }));
 
-        if (cancellationToken.CanBeCanceled)
+        if (!TryArmClientCancellation())
         {
-            var registration = cancellationToken.Register(
-                () => AbortWithCompletion(new OperationCanceledException(cancellationToken)));
-            subscriptions.Add(new ActionDisposable(registration.Dispose));
-
-            if (cancellationToken.IsCancellationRequested)
-            {
-                AbortWithCompletion(new OperationCanceledException(cancellationToken));
-                return responses.ReadAll(onDispose: () => ValueTask.CompletedTask);
-            }
+            return responses.ReadAll(onDispose: () => ValueTask.CompletedTask);
         }
 
         _ = Task.Run(async () =>
