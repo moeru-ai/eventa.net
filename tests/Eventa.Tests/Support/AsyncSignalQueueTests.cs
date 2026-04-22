@@ -125,6 +125,31 @@ public class AsyncSignalQueueTests
     }
 
     [Fact]
+    public async Task ReadAll_WhenConsumerCancellationIsRespected_PropagatesOperationCanceledException_AndInvokesOnDispose()
+    {
+        var disposeCalls = 0;
+        var queue = new AsyncSignalQueue<int>();
+        var stream = queue.ReadAll(onDispose: () =>
+        {
+            Interlocked.Increment(ref disposeCalls);
+            return ValueTask.CompletedTask;
+        });
+        using var cancellationSource = new CancellationTokenSource();
+        await using var enumerator = stream.GetAsyncEnumerator(cancellationSource.Token);
+
+        var moveNextTask = enumerator.MoveNextAsync().AsTask();
+
+        cancellationSource.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await moveNextTask);
+
+        await enumerator.DisposeAsync();
+        await enumerator.DisposeAsync();
+
+        Assert.Equal(1, Volatile.Read(ref disposeCalls));
+    }
+
+    [Fact]
     public async Task ReadAll_WhenConsumerCancellationIsIgnored_ReadsWithCanceledToken()
     {
         var queue = new AsyncSignalQueue<int>();
