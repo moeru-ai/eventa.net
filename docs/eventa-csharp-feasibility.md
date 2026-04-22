@@ -1,217 +1,255 @@
-# Eventa → C# .NET 10 迁移可行性报告
+# Eventa -> C# .NET 10 Migration Feasibility Report
 
-## 1. Eventa 架构概览
+## 1. Eventa Architecture Overview
 
-### 1.1 Eventa 是什么
+### 1.1 What Eventa Is
 
-Eventa 是一个**传输无关的类型安全事件系统**，在事件原语之上组合出 RPC（请求-响应）和流式通信模式。核心理念：
+Eventa is a **transport-agnostic, type-safe event system** that builds RPC
+(request/response) and streaming patterns on top of event primitives. Its core
+ideas are:
 
-- **事件是一等公民** — 定义一次，到处使用
-- **传输层可插拔** — 同一事件定义可跨 Electron IPC、WebSocket、Web Worker、BroadcastChannel 等传输层工作
-- **RPC 即事件** — invoke/stream 模式完全由事件原语组合而成，不引入额外协议
+- **Events are first-class citizens**: define them once and reuse them everywhere
+- **The transport layer is pluggable**: the same event definition can work across
+  Electron IPC, WebSocket, Web Worker, BroadcastChannel, and other transports
+- **RPC is expressed as events**: invoke/stream patterns are composed entirely
+  from event primitives without introducing a separate protocol
 
-### 1.2 核心三层
+### 1.2 The Three Core Layers
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    应用层 (Application)                    │
-│  defineInvoke / defineStreamInvoke / withRemoteMethods   │
+│                  Application Layer                      │
+│  defineInvoke / defineStreamInvoke / withRemoteMethods  │
 ├─────────────────────────────────────────────────────────┤
-│                    协议层 (Protocol)                       │
-│  EventContext (emit / on / once / off)                    │
-│  InvokeEventa (7 事件对)                                  │
-│  MatchExpression (glob / regex / 自定义谓词)               │
+│                   Protocol Layer                        │
+│  EventContext (emit / on / once / off)                  │
+│  InvokeEventa (7 related events)                        │
+│  MatchExpression (glob / regex / custom predicate)      │
 ├─────────────────────────────────────────────────────────┤
-│                    适配器层 (Adapter)                      │
-│  EventTarget / EventEmitter / WebSocket / Electron /     │
-│  BroadcastChannel / WebWorker / WorkerThreads            │
+│                   Adapter Layer                         │
+│  EventTarget / EventEmitter / WebSocket / Electron /    │
+│  BroadcastChannel / WebWorker / WorkerThreads           │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 1.3 EventContext — 发布/订阅核心
+### 1.3 EventContext - The Publish/Subscribe Core
 
-`createContext()` 返回一个 `EventContext`，其内部维护：
+`createContext()` returns an `EventContext` whose internal state includes:
 
-| 数据结构 | 用途 |
-|---------|------|
-| `Map<EventId, Set<Handler>>` listeners | 持久监听器 |
-| `Map<EventId, Set<Handler>>` onceListeners | 一次性监听器（触发后自动移除） |
-| `Map<MatchExpressionId, MatchExpression>` matchExpressions | 匹配表达式注册表 |
-| `Map<MatchExpressionId, Set<Handler>>` matchExpressionListeners | 按匹配表达式分组的监听器 |
+| Data structure | Purpose |
+|------|------|
+| `Map<EventId, Set<Handler>>` listeners | Persistent listeners |
+| `Map<EventId, Set<Handler>>` onceListeners | One-shot listeners removed after firing |
+| `Map<MatchExpressionId, MatchExpression>` matchExpressions | Match-expression registry |
+| `Map<MatchExpressionId, Set<Handler>>` matchExpressionListeners | Listeners grouped by match expression |
 
-`emit(event, payload)` 流程：
+`emit(event, payload)` works like this:
 
-1. 构造 `emittingPayload = { ...event, body: payload }`
-2. 遍历对应 `event.id` 的所有 listeners 并逐一调用
-3. 遍历对应 `event.id` 的所有 onceListeners，调用后从 Set 中删除
-4. 遍历所有已注册的 matchExpressions，对 emittingPayload 执行 `matcher()`，匹配成功则分发给该表达式的 listeners/onceListeners
-5. 调用适配器 hook `onSent(event.id, emittingPayload, options)`
+1. Construct `emittingPayload = { ...event, body: payload }`
+2. Iterate all listeners for `event.id` and invoke them one by one
+3. Iterate all onceListeners for `event.id`, invoke them, and remove them from
+   the set afterward
+4. Iterate all registered `matchExpressions`, run their `matcher()` against
+   `emittingPayload`, and dispatch to that expression's listeners/onceListeners
+   when it matches
+5. Invoke the adapter hook `onSent(event.id, emittingPayload, options)`
 
-`on()` / `once()` 返回一个 `() => void` 取消订阅函数。
+`on()` and `once()` return a `() => void` unsubscribe function.
 
-### 1.4 Invoke 协议 — 7 事件对
+### 1.4 The Invoke Protocol - A Family of 7 Events
 
-`defineInvokeEventa<Res, Req>()` 生成 7 个关联事件，前缀共享同一 `tag`：
+`defineInvokeEventa<Res, Req>()` creates seven related events that share the
+same `tag` prefix:
 
-| 事件 | 方向 | 含义 |
+| Event | Direction | Meaning |
 |------|------|------|
-| `{tag}-send` | Client → Server | 发起请求（含 `invokeId` + `content`） |
-| `{tag}-send-error` | Client → Server | 客户端流式输入错误 |
-| `{tag}-send-stream-end` | Client → Server | 客户端流式输入结束 |
-| `{tag}-send-abort` | Client → Server | 客户端取消请求 |
-| `{tag}-receive` | Server → Client | 服务端响应成功 |
-| `{tag}-receive-error` | Server → Client | 服务端 handler 抛出异常 |
-| `{tag}-receive-stream-end` | Server → Client | 服务端流式响应结束 |
+| `{tag}-send` | Client -> Server | Start a request (`invokeId` + `content`) |
+| `{tag}-send-error` | Client -> Server | Error from the client's streaming input |
+| `{tag}-send-stream-end` | Client -> Server | End of the client's streaming input |
+| `{tag}-send-abort` | Client -> Server | Client canceled the request |
+| `{tag}-receive` | Server -> Client | Successful server response |
+| `{tag}-receive-error` | Server -> Client | Server handler threw an exception |
+| `{tag}-receive-stream-end` | Server -> Client | End of the server's streaming response |
 
-**InvokeId 关联机制**：每次调用生成 `invokeId`（nanoid 16字符），监听事件 ID 拼接为 `{eventId}-{invokeId}`，确保并发 invoke 互不干扰。
+**InvokeId correlation**: every call generates an `invokeId` (16-character
+nanoid). Listener event IDs are composed as `{eventId}-{invokeId}` so concurrent
+invokes stay isolated from one another.
 
-### 1.5 Invoke Handler 流程
+### 1.5 Invoke Handler Flow
 
-`defineInvokeHandler(ctx, events, handler)` 的服务端内部：
+Inside `defineInvokeHandler(ctx, events, handler)` on the server side:
 
-1. 监听 `sendEvent`：收到请求后根据 `isReqStream` 判断是否为流式输入
-   - 非流式：直接 `handleInvoke(invokeId, payload)`
-   - 流式：创建 `ReadableStream`，将每个 chunk 通过 `controller.enqueue()` 推入
-2. 监听 `sendEventStreamEnd`：关闭流式输入的 ReadableStream controller
-3. 监听 `sendEventAbort`：abort `AbortController`，如有流则 error 掉 ReadableStream
-4. `handleInvoke` 执行 handler，结果通过 `receiveEvent` 发回，异常通过 `receiveEventError` 发回
-5. 返回 `() => void` 用于取消注册该 handler
+1. Listen to `sendEvent`; after receiving a request, decide whether the input is
+   streaming based on `isReqStream`
+   - Non-streaming: call `handleInvoke(invokeId, payload)` directly
+   - Streaming: create a `ReadableStream` and push each chunk via
+     `controller.enqueue()`
+2. Listen to `sendEventStreamEnd` and close the request stream controller
+3. Listen to `sendEventAbort`, abort the `AbortController`, and error the
+   request `ReadableStream` if one exists
+4. Execute the handler in `handleInvoke`; send successful results through
+   `receiveEvent` and exceptions through `receiveEventError`
+5. Return `() => void` so the handler can be unregistered
 
-### 1.6 Stream 协议
+### 1.6 The Stream Protocol
 
-`defineStreamInvoke` / `defineStreamInvokeHandler` 与 Invoke 共享相同的 7 事件对，差异：
+`defineStreamInvoke` / `defineStreamInvokeHandler` reuse the same seven-event
+family as invoke. The differences are:
 
-- **Client 侧**：返回 `ReadableStream<Res>` 而非 `Promise<Res>`，监听多个 `receiveEvent` 并 `enqueue()`，直到 `receiveEventStreamEnd` 触发 `close()`
-- **Server 侧**：handler 返回 `AsyncGenerator<Res>`，每 yield 一个值就 emit 一个 `receiveEvent`，结束时 emit `receiveEventStreamEnd`
-- `toStreamHandler()` 辅助函数：将回调风格（`emit(data)` 推送）转换为 `AsyncGenerator` 风格
+- **Client side**: returns `ReadableStream<Res>` instead of `Promise<Res>`,
+  listens to multiple `receiveEvent`s, and `enqueue()`s values until
+  `receiveEventStreamEnd` calls `close()`
+- **Server side**: the handler returns `AsyncGenerator<Res>`; each yielded value
+  emits one `receiveEvent`, and completion emits `receiveEventStreamEnd`
+- `toStreamHandler()` converts callback style (`emit(data)`) into
+  `AsyncGenerator` style
 
-### 1.7 适配器模式
+### 1.7 The Adapter Pattern
 
-适配器是一个函数 `(emit) => { cleanup, hooks: { onSent, onReceived } }`：
+An adapter is a function of the form
+`(emit) => { cleanup, hooks: { onSent, onReceived } }`:
 
-- `onSent`：`ctx.emit()` 每次调用后触发，收到的是 `{ ...event, body: payload }` 形式的 envelope，适配器在此将其序列化并发送到传输层
-- `onReceived`：`ctx.on()`/`ctx.once()` 处理消息时触发，收到的同样是 envelope；若由 match expression 命中，hook 的 `eventId` 可能是 match-expression id，此时原始事件 ID 仍保留在 `envelope.EventId`
-- 返回 `cleanup` 函数用于断开传输层连接
+- `onSent`: called after every `ctx.emit()`, receiving an envelope shaped like
+  `{ ...event, body: payload }`; the adapter serializes it and forwards it over
+  the transport
+- `onReceived`: called when `ctx.on()`/`ctx.once()` handles a message; it also
+  receives an envelope. If the message matched through a match expression, the
+  hook's `eventId` may be the match-expression ID, while the original event ID
+  is still available on `envelope.EventId`
+- Returns a `cleanup` function that disconnects the transport
 
-已有适配器覆盖的传输层：EventTarget、EventEmitter、BroadcastChannel、WebSocket（客户端+H3服务端）、Electron（main+renderer）、WebWorker、Worker Threads。
+Existing adapters already cover EventTarget, EventEmitter, BroadcastChannel,
+WebSocket (client and H3 server), Electron (main and renderer), WebWorker, and
+Worker Threads.
 
-### 1.8 扩展机制
+### 1.8 Extension Mechanism
 
-- **Invoke 扩展**：`withRemoteMethods()` 包装 `defineInvoke`/`defineInvokeHandler`，实现 function stub 序列化/反序列化（将函数替换为 `{ __eventaInvoke: { tag } }` 标记，在另一端自动注册为新的 invoke handler）
-- **Context 扩展**：`EventContext.extensions` 字段，适配器可携带内部状态（如 `__internal.invoke.abortOnEvents` 用于 worker 崩溃时自动 reject 所有 pending invoke）
-- **Emit 扩展**：`EmitOptions` 泛型参数，适配器可注入额外选项（如 `{ raw: { event } }` 用于传递原始传输层事件、`{ transfer: Transferable[] }` 用于 Structured Clone 传输）
-
----
-
-## 2. Eventa 测试体系分析
-
-### 2.1 测试框架
-
-- 使用 **Vitest** 作为测试运行器
-- `vi.fn()` 创建 mock/spy 函数
-- `expectTypeOf()` 进行编译期类型断言
-- 纯单元测试，所有测试在同一进程内使用 `createContext()` 直连（无真实传输层）
-
-### 2.2 各测试文件覆盖场景
-
-#### `context.spec.ts` — EventContext 基础
-
-| 场景 | 描述 |
-|------|------|
-| register and emit | 注册 handler 后 emit，验证 handler 收到 `{ ...event, body: payload }` |
-| same handler only once | 同一 handler 注册两次，emit 时只调用一次（Set 去重） |
-| once listeners | `once()` 注册，emit 两次只触发一次 |
-| off (all) | `off(event)` 移除所有该事件的监听器 |
-| off (returned) | `on()` 返回值调用即取消该监听器 |
-| off (specific handler) | `off(event, handler)` 只移除指定 handler，其余不受影响 |
-
-#### `invoke.spec.ts` — Unary RPC
-
-| 场景 | 描述 |
-|------|------|
-| request-response | 基础请求-响应，验证返回值 |
-| lazy context (sync/async) | `defineInvoke(() => ctx)` 延迟获取 context |
-| error propagation | handler 抛异常，invoke Promise reject 同一错误对象 |
-| abort/cancel | `AbortController.abort()` → invoke reject AbortError，handler 收到 abort 通知 |
-| concurrent invokes | 3 个并行 invoke，互不干扰 |
-| same handler once | 同一 handler 注册两次只生效一次 |
-| undefine handler | `undefineInvokeHandler()` 移除单个/全部 handler |
-| batch registration | `defineInvokeHandlers()` + `defineInvokes()` 批量注册和调用 |
-| stream input | 请求为 `ReadableStream<number>`，handler 用 `for await` 消费，返回聚合结果 |
-| abort stream input | 定时流输入（250ms/item），第4-5项之间 abort，验证已接收4项、handler 收到 AbortError、耗时在预期范围 |
-
-#### `stream.spec.ts` — 流式 RPC
-
-| 场景 | 描述 |
-|------|------|
-| server-streaming | AsyncGenerator handler，客户端 `for await` 收集所有 chunk |
-| toStreamHandler | 回调风格 handler（`emit()` 推送）等价于 generator |
-| concurrent streams | 3 个并行 stream invoke，每个结果独立验证 |
-| error surfacing | handler 抛异常，客户端 `for await` 收到同一 Error 对象 |
-| abort stream | `AbortController.abort()` → 客户端 ReadableStream error，handler 收到 abort |
-| cancel stream | `stream.cancel()` → handler 收到 abort |
-| abort request stream | 定时流输入 + 流式响应，中途 abort，验证已接收项和耗时 |
-| request stream input | `ReadableStream<number>` 输入 → `AsyncGenerator` 输出，bidi 模式 |
-| toStreamHandler + stream input | bidi + 回调风格 handler |
-
-#### `invoke-shared.spec.ts` — InvokeEventa 结构
-
-验证 `defineInvokeEventa()` 生成的 7 事件拥有正确的 `invokeType` 枚举值和唯一 `id`。
-
-#### `invoke-remote-methods.spec.ts` — Function Stub 扩展
-
-| 场景 | 描述 |
-|------|------|
-| function stubs | payload 中含函数，自动序列化为 stub，另一端可调用 |
-| dispose | 手动清理 stub handler |
-| maxFunctions | 超出函数数量限制则 reject |
-| disallowed tag | 非法 tag 的忽略/抛出策略 |
-| prototype pollution (6个场景) | `__proto__`、`constructor.prototype`、嵌套、数组等攻击向量全部验证 |
-| auto-dispose | 超时自动清理 stub handler |
-| strict mode | 畸形 stub payload 抛错 |
-
-#### `context-extension-invoke-internal.spec.ts` — 适配器取消扩展
-
-验证 `registerInvokeAbortEventListeners()` 注册的事件能自动 reject 所有 pending invoke。
-
-#### `utils.spec.ts` — 工具函数
-
-`isAsyncIterable()`、`isReadableStream()` 的正例和反例。
+- **Invoke extension**: `withRemoteMethods()` wraps `defineInvoke` /
+  `defineInvokeHandler` to serialize and deserialize function stubs (functions
+  are replaced with `{ __eventaInvoke: { tag } }`, and the other side
+  automatically registers a new invoke handler)
+- **Context extension**: `EventContext.extensions`, where adapters can carry
+  internal state (for example, `__internal.invoke.abortOnEvents` to reject every
+  pending invoke when a worker crashes)
+- **Emit extension**: generic `EmitOptions` so adapters can inject extra options
+  (for example, `{ raw: { event } }` for original transport events or
+  `{ transfer: Transferable[] }` for Structured Clone transfers)
 
 ---
 
-## 3. C# .NET 10 映射设计
+## 2. Eventa Test Suite Analysis
 
-### 3.1 总体原则
+### 2.1 Test Framework
 
-> **Eventa 仅作为协议层和 JS 参考，C# 实现必须遵循 .NET 事件驱动系统的最佳实践。**
+- Uses **Vitest** as the test runner
+- Uses `vi.fn()` to create mocks and spies
+- Uses `expectTypeOf()` for compile-time type assertions
+- Uses pure unit tests: every test runs in-process with `createContext()` wired
+  directly to itself, without a real transport
 
-关键差异决策：
+### 2.2 Coverage by Test File
 
-| Eventa (TS) | C# .NET 10 | 理由 |
-|-------------|-----------|------|
-| `defineEventa<P>()` 返回 plain object | `record EventDefinition<TPayload>` 或 `static readonly` 实例 | C# 推荐不可变、值语义的事件标识 |
-| `Eventa<P>.id` 为字符串 | `string Id` 属性，同样支持手动指定或自动生成 | 保持兼容 |
-| `EventContext` 闭包实现 | `class EventContext` + 接口 `IEventContext` | C# OOP 惯例 |
-| `emit(event, payload)` | `void Emit<TPayload>(EventDefinition<TPayload> event, TPayload payload)` | 泛型约束保证类型安全 |
-| `on()` 返回取消函数 | 返回 `IDisposable` 订阅令牌 | .NET 资源管理惯例（`using` 语法） |
-| `Promise<Res>` | `Task<TRes>` / `ValueTask<TRes>` | .NET async/await |
-| `AbortSignal` / `AbortController` | `CancellationToken` / `CancellationTokenSource` | .NET 取消模型 |
-| `ReadableStream<T>` | `IAsyncEnumerable<T>` 或 `Channel<T>` | .NET 异步流原语 |
-| `AsyncGenerator` (yield) | `async IAsyncEnumerable<T>` (yield return) | C# 8.0+ 原生支持 |
-| `vi.fn()` mock | `NSubstitute` 或 `Moq` | .NET 测试生态 |
-| Vitest | xUnit + FluentAssertions | .NET 测试标准 |
+#### `context.spec.ts` - EventContext Basics
 
-### 3.2 事件定义
+| Scenario | Description |
+|------|------|
+| register and emit | Register a handler, emit an event, verify the handler receives `{ ...event, body: payload }` |
+| same handler only once | Register the same handler twice; emit should call it only once because a `Set` deduplicates it |
+| once listeners | `once()` registration fires only once even if the event is emitted twice |
+| off (all) | `off(event)` removes all listeners for that event |
+| off (returned) | Calling the function returned by `on()` unsubscribes that one listener |
+| off (specific handler) | `off(event, handler)` removes only the specified handler |
+
+#### `invoke.spec.ts` - Unary RPC
+
+| Scenario | Description |
+|------|------|
+| request-response | Basic request/response and return-value verification |
+| lazy context (sync/async) | `defineInvoke(() => ctx)` resolves the context lazily |
+| error propagation | Handler throws and the invoke promise rejects with the same error object |
+| abort/cancel | `AbortController.abort()` rejects the invoke with `AbortError` and notifies the handler |
+| concurrent invokes | Three invokes in parallel that remain isolated |
+| same handler once | Registering the same handler twice still results in one active registration |
+| undefine handler | `undefineInvokeHandler()` removes one or all handlers |
+| batch registration | `defineInvokeHandlers()` + `defineInvokes()` register and invoke in bulk |
+| stream input | Request payload is `ReadableStream<number>`; the handler consumes it with `for await` and returns an aggregate |
+| abort stream input | Timed request stream (250ms per item), aborted between items 4 and 5; verifies the first four items were received, the handler saw `AbortError`, and elapsed time matches expectations |
+
+#### `stream.spec.ts` - Streaming RPC
+
+| Scenario | Description |
+|------|------|
+| server-streaming | AsyncGenerator handler; client collects all chunks with `for await` |
+| toStreamHandler | Callback-style handler (`emit()`) is equivalent to a generator |
+| concurrent streams | Three streaming invokes in parallel with independent results |
+| error surfacing | Handler throws and the client sees the same `Error` object during `for await` |
+| abort stream | `AbortController.abort()` errors the client stream and notifies the handler |
+| cancel stream | `stream.cancel()` notifies the handler |
+| abort request stream | Timed request stream + streaming response; abort midway and verify both received items and elapsed time |
+| request stream input | `ReadableStream<number>` in, `AsyncGenerator` out; bidirectional streaming |
+| toStreamHandler + stream input | Bidirectional streaming with callback-style handler |
+
+#### `invoke-shared.spec.ts` - InvokeEventa Shape
+
+Verifies that `defineInvokeEventa()` produces seven events with the correct
+`invokeType` enum values and unique IDs.
+
+#### `invoke-remote-methods.spec.ts` - Function Stub Extension
+
+| Scenario | Description |
+|------|------|
+| function stubs | Function values in the payload are serialized into stubs and callable on the remote side |
+| dispose | Manual cleanup of the generated stub handler |
+| maxFunctions | Rejects when the function-count limit is exceeded |
+| disallowed tag | Ignore/throw policy for illegal tags |
+| prototype pollution (6 cases) | Verifies protection against `__proto__`, `constructor.prototype`, nested paths, array vectors, and similar attacks |
+| auto-dispose | Automatically cleans up stub handlers after a timeout |
+| strict mode | Throws on malformed stub payloads |
+
+#### `context-extension-invoke-internal.spec.ts` - Adapter Abort Extension
+
+Verifies that events registered via `registerInvokeAbortEventListeners()`
+automatically reject all pending invokes.
+
+#### `utils.spec.ts` - Utilities
+
+Positive and negative cases for `isAsyncIterable()` and `isReadableStream()`.
+
+---
+
+## 3. C# .NET 10 Mapping Design
+
+### 3.1 Overall Principle
+
+> **Treat Eventa purely as the protocol layer and a JavaScript reference. The
+> C# implementation must follow .NET event-system best practices.**
+
+Key mapping decisions:
+
+| Eventa (TS) | C# .NET 10 | Why |
+|------|------|------|
+| `defineEventa<P>()` returns a plain object | `record EventDefinition<TPayload>` or `static readonly` instances | Immutable value-like event identities are idiomatic in C# |
+| `Eventa<P>.id` is a string | `string Id` property, manually assigned or generated | Keeps compatibility |
+| `EventContext` implemented as a closure | `class EventContext` + `IEventContext` | Fits C# OOP conventions |
+| `emit(event, payload)` | `void Emit<TPayload>(EventDefinition<TPayload> eventDef, TPayload payload)` | Generic constraints preserve type safety |
+| `on()` returns an unsubscribe function | Returns `IDisposable` subscription token | Matches .NET resource-management conventions (`using`) |
+| `Promise<Res>` | `Task<TRes>` / `ValueTask<TRes>` | Native async model in .NET |
+| `AbortSignal` / `AbortController` | `CancellationToken` / `CancellationTokenSource` | Native cancellation model in .NET |
+| `ReadableStream<T>` | `IAsyncEnumerable<T>` or `Channel<T>` | Native async-stream primitives in .NET |
+| `AsyncGenerator` | `async IAsyncEnumerable<T>` | Native C# support since C# 8.0 |
+| `vi.fn()` | `NSubstitute` or `Moq` | Standard .NET testing tooling |
+| Vitest | xUnit + FluentAssertions | Common .NET test stack |
+
+### 3.2 Event Definitions
 
 ```csharp
-// 不可变事件定义，record 提供值相等语义
+// Immutable event definition. record provides value-equality semantics.
 public record EventDefinition<TPayload>(string Id)
 {
     public EventDefinition() : this(IdGenerator.New()) { }
 }
 
-// Invoke 事件定义，关联 7 个子事件
+// Invoke event definition: the seven related events
 public record InvokeEventDefinition<TRes, TReq>(string Tag)
 {
     public InvokeEventDefinition() : this(IdGenerator.New()) { }
@@ -225,13 +263,13 @@ public record InvokeEventDefinition<TRes, TReq>(string Tag)
     public string ReceiveStreamEndId => $"{Tag}-receive-stream-end";
 }
 
-// 匹配表达式
+// Match expression
 public record MatchExpression<TPayload>(
     string Id,
     Func<EventEnvelope<TPayload>, bool> Matcher
 );
 
-// 静态工厂
+// Static factory
 public static class Eventa
 {
     public static EventDefinition<TPayload> Define<TPayload>(string? id = null)
@@ -261,30 +299,33 @@ public interface IEventContext : IDisposable
         EventDefinition<TPayload> eventDef,
         Action<EventEnvelope<TPayload>>? handler = null);
 
-    // 匹配表达式重载
+    // Match-expression overload
     IDisposable On<TPayload>(
         MatchExpression<TPayload> match,
         Action<EventEnvelope<TPayload>> handler);
 }
 
-// 事件信封，对应 TS 中的 { ...event, body: payload }
+// Event envelope, corresponding to TS's { ...event, body: payload }
 public record EventEnvelope<TPayload>(string EventId, TPayload Body);
 ```
 
-**实现要点**：
+**Implementation notes**:
 
-- 内部使用 `ConcurrentDictionary<string, ConcurrentBag<Delegate>>` 保证线程安全（TS 版无需考虑线程安全，C# 必须考虑）
-- `On()` 返回 `IDisposable`，调用 `Dispose()` 即取消订阅
-- `Once()` 内部注册后自动在首次触发时移除（同 TS）
-- 匹配表达式按独立字典存储，`Emit()` 时遍历执行 matcher
+- Use `ConcurrentDictionary<string, ConcurrentBag<Delegate>>` internally for
+  thread safety. TS does not need this because it is single-threaded; C# does.
+- `On()` returns `IDisposable`; calling `Dispose()` unsubscribes.
+- `Once()` registers a handler that automatically removes itself after the first
+  invocation, just like TS.
+- Match expressions live in a separate dictionary, and `Emit()` evaluates each
+  matcher when dispatching.
 
-### 3.4 Invoke 扩展
+### 3.4 Invoke Mapping
 
 ```csharp
 public static class EventInvoke
 {
     /// <summary>
-    /// 创建客户端 invoke 函数（Unary RPC）
+    /// Creates a client-side invoke function (unary RPC)
     /// </summary>
     public static Func<TReq, CancellationToken, Task<TRes>> DefineInvoke<TRes, TReq>(
         IEventContext ctx,
@@ -296,28 +337,28 @@ public static class EventInvoke
             var tcs = new TaskCompletionSource<TRes>(
                 TaskCreationOptions.RunContinuationsAsynchronously);
 
-            // CancellationToken 注册
+            // CancellationToken registration
             using var ctr = ct.Register(() =>
             {
                 ctx.Emit(/* sendAbort */, new AbortPayload(invokeId, ct.ToString()));
                 tcs.TrySetCanceled(ct);
             });
 
-            // 监听 receiveEvent-{invokeId}
+            // Listen to receiveEvent-{invokeId}
             using var onReceive = ctx.On(receiveEvent, envelope =>
             {
                 if (envelope.Body.InvokeId != invokeId) return;
                 tcs.TrySetResult(envelope.Body.Content);
             });
 
-            // 监听 receiveEventError-{invokeId}
+            // Listen to receiveEventError-{invokeId}
             using var onError = ctx.On(receiveErrorEvent, envelope =>
             {
                 if (envelope.Body.InvokeId != invokeId) return;
                 tcs.TrySetException(envelope.Body.Error);
             });
 
-            // 发送请求
+            // Send the request
             ctx.Emit(sendEvent, new SendPayload<TReq>(invokeId, req));
 
             return await tcs.Task;
@@ -325,66 +366,70 @@ public static class EventInvoke
     }
 
     /// <summary>
-    /// 注册服务端 invoke handler
+    /// Registers a server-side invoke handler
     /// </summary>
     public static IDisposable DefineInvokeHandler<TRes, TReq>(
         IEventContext ctx,
         InvokeEventDefinition<TRes, TReq> eventDef,
         Func<TReq, CancellationToken, Task<TRes>> handler)
     {
-        // 监听 sendEvent，提取 invokeId，执行 handler，通过 receiveEvent 返回结果
-        // 监听 sendAbort，取消对应的 CancellationTokenSource
-        // 返回 IDisposable 用于取消注册
+        // Listen to sendEvent, extract invokeId, execute the handler,
+        // and return the result through receiveEvent
+        // Listen to sendAbort and cancel the matching CancellationTokenSource
+        // Return IDisposable so the handler registration can be removed
     }
 }
 ```
 
-**C# 特有设计**：
+**C#-specific design points**:
 
-- 使用 `TaskCompletionSource<TRes>` + `TaskCreationOptions.RunContinuationsAsynchronously` 避免死锁
-- `CancellationToken` 替代 `AbortSignal`，语义完全对应
-- Handler 签名 `Func<TReq, CancellationToken, Task<TRes>>`，handler 内可直接 `ct.ThrowIfCancellationRequested()`
-- InvokeId 关联逻辑与 TS 完全一致（事件 ID 拼接）
+- Use `TaskCompletionSource<TRes>` +
+  `TaskCreationOptions.RunContinuationsAsynchronously` to avoid deadlocks
+- Use `CancellationToken` instead of `AbortSignal`; the semantics map directly
+- Handler signature is `Func<TReq, CancellationToken, Task<TRes>>`, so handler
+  code can directly call `ct.ThrowIfCancellationRequested()`
+- InvokeId correlation logic is identical to TS (event ID + invokeId)
 
-### 3.5 Context 扩展
+### 3.5 Context Extensions
 
 ```csharp
-// 适配器接口
+// Adapter interface
 public interface IEventaAdapter : IDisposable
 {
     /// <summary>
-    /// ctx.emit() 调用后触发，负责将 EventEnvelope<TPayload> 序列化并发送到传输层
+    /// Called after ctx.emit(); responsible for serializing
+    /// EventEnvelope<TPayload> and sending it across the transport.
     /// </summary>
     void OnSent(string eventId, object envelope, object? options = null);
 
     /// <summary>
-    /// ctx.on()/ctx.once() 匹配到消息时触发（观测 hook）
-    /// eventId 可能是 match-expression id，原始事件 ID 保留在 envelope.EventId
+    /// Called when ctx.on()/ctx.once() matches an incoming message (observation hook).
+    /// eventId may be a match-expression id; the original event id remains in envelope.EventId.
     /// </summary>
     void OnReceived(string eventId, object envelope);
 }
 
-// 带适配器的 context 工厂
+// Context factory with adapter support
 public static IEventContext CreateContext(IEventaAdapter? adapter = null)
 {
     return new EventContext(adapter);
 }
 ```
 
-**Context 扩展点**（对应 TS `extensions`）：
+**Context extension points** (equivalent to TS `extensions`):
 
 ```csharp
 public interface IEventContext
 {
-    // ... 基础方法 ...
+    // ... base methods ...
 
     /// <summary>
-    /// 扩展属性包，适配器可存储内部状态
+    /// Extension property bag where adapters can store internal state
     /// </summary>
     IDictionary<string, object> Extensions { get; }
 }
 
-// Invoke 内部配置（适配器 abort 扩展）
+// Internal invoke config (adapter abort extension)
 public class InvokeInternalConfig
 {
     public List<EventDefinition<object>> AbortOnEvents { get; } = new();
@@ -397,26 +442,27 @@ public static class InvokeExtensions
         this IEventContext ctx,
         EventDefinition<object> fatalEvent)
     {
-        // 存入 ctx.Extensions["__internal.invoke"]
+        // Store it in ctx.Extensions["__internal.invoke"]
     }
 }
 ```
 
-### 3.6 Emit 扩展
+### 3.6 Emit Extensions
 
-TS 中 `EmitOptions` 是泛型参数，适配器可注入额外选项。C# 对应设计：
+In TS, `EmitOptions` is a generic type parameter that adapters can extend with
+extra options. A C# equivalent could be:
 
 ```csharp
-// 基础 emit
+// Basic emit
 void Emit<TPayload>(EventDefinition<TPayload> eventDef, TPayload payload);
 
-// 带选项的 emit（适配器扩展）
+// Emit with adapter-specific options
 void Emit<TPayload, TOptions>(
     EventDefinition<TPayload> eventDef,
     TPayload payload,
     TOptions options) where TOptions : class;
 
-// 使用示例（SignalR 适配器）
+// Example usage (SignalR adapter)
 ctx.Emit(moveEvent, new MoveData(100, 200), new SignalROptions
 {
     GroupName = "room-1",
@@ -424,13 +470,13 @@ ctx.Emit(moveEvent, new MoveData(100, 200), new SignalROptions
 });
 ```
 
-### 3.7 Stream 扩展
+### 3.7 Stream Mapping
 
 ```csharp
 public static class EventStream
 {
     /// <summary>
-    /// 服务端流式响应（Server-Streaming）
+    /// Server-streaming response
     /// </summary>
     public static IAsyncEnumerable<TRes> DefineStreamInvoke<TRes, TReq>(
         IEventContext ctx,
@@ -438,48 +484,53 @@ public static class EventStream
         TReq request,
         CancellationToken ct = default)
     {
-        // 返回 IAsyncEnumerable<TRes>，内部使用 Channel<TRes> 桥接
-        // 监听 receiveEvent → channel.Writer.TryWrite()
-        // 监听 receiveEventStreamEnd → channel.Writer.Complete()
-        // 监听 receiveEventError → channel.Writer.Complete(exception)
+        // Return IAsyncEnumerable<TRes>; internally bridge through Channel<TRes>
+        // receiveEvent -> channel.Writer.TryWrite()
+        // receiveEventStreamEnd -> channel.Writer.Complete()
+        // receiveEventError -> channel.Writer.Complete(exception)
     }
 
     /// <summary>
-    /// 注册流式 handler（使用 async yield）
+    /// Registers a streaming handler (using async yield)
     /// </summary>
     public static IDisposable DefineStreamInvokeHandler<TRes, TReq>(
         IEventContext ctx,
         InvokeEventDefinition<TRes, TReq> eventDef,
         Func<TReq, CancellationToken, IAsyncEnumerable<TRes>> handler)
     {
-        // 每个 yield return 的值 → emit receiveEvent
-        // 枚举结束 → emit receiveEventStreamEnd
-        // 异常 → emit receiveEventError
+        // Each yielded value -> emit receiveEvent
+        // End of enumeration -> emit receiveEventStreamEnd
+        // Exception -> emit receiveEventError
     }
 }
 ```
 
-**C# 特有亮点**：
+**C#-specific advantages**:
 
-- `IAsyncEnumerable<T>` 是 C# 8.0+ 的一等公民，完美对应 TS 的 `AsyncGenerator`
-- `Channel<T>`（`System.Threading.Channels`）作为内部缓冲区，性能优于手动 Task 链
-- `CancellationToken` 通过 `[EnumeratorCancellation]` 特性与 `await foreach` 自然集成
-- 双向流可使用 `IAsyncEnumerable<TReq>` 输入 + `IAsyncEnumerable<TRes>` 输出
+- `IAsyncEnumerable<T>` is a first-class feature in C# 8.0+ and maps directly
+  to TS `AsyncGenerator`
+- `Channel<T>` (`System.Threading.Channels`) works well as a high-performance
+  internal buffer
+- `[EnumeratorCancellation]` integrates `CancellationToken` naturally with
+  `await foreach`
+- Bidirectional streaming can use `IAsyncEnumerable<TReq>` input and
+  `IAsyncEnumerable<TRes>` output
 
 ```csharp
-// 双向流 handler 签名
+// Bidirectional stream handler signature
 Func<IAsyncEnumerable<TReq>, CancellationToken, IAsyncEnumerable<TRes>> bidiHandler;
 
-// 使用
+// Usage
 await foreach (var response in StreamInvoke(inputStream, ct))
 {
     Console.WriteLine(response);
 }
 ```
 
-### 3.8 `toStreamHandler` 等价设计
+### 3.8 `toStreamHandler` Equivalent
 
-TS 中 `toStreamHandler` 将回调风格（`emit(data)`）转换为 `AsyncGenerator`。C# 等价：
+In TS, `toStreamHandler` converts callback-style `emit(data)` code into an
+`AsyncGenerator`. A direct C# equivalent is:
 
 ```csharp
 public static Func<TReq, CancellationToken, IAsyncEnumerable<TRes>>
@@ -516,58 +567,78 @@ private static async IAsyncEnumerable<TRes> StreamFromCallback<TReq, TRes>(
 }
 ```
 
-### 3.9 当前仓库实现状态（2026-04）
+### 3.9 Current Repository Implementation Status (2026-04)
 
-上面的 C# 片段主要用于说明映射思路；当前仓库中的原型已经收敛到更具体的实现边界，和早期草图有几个明确差异：
+The C# snippets above explain the mapping direction. The prototype in the
+current repository has already converged on more concrete implementation
+boundaries and differs from the early sketch in several clear ways:
 
-- `EventInvoke` 与 `EventStream` 仍然是两个显式状态机；本轮重构只抽取共享机制，没有引入统一的 generic protocol engine。
-- 客户端 pending operation 已经分别实现为 `PendingInvokeOperation<TResponse, TRequest>` 与 `PendingStreamInvokeOperation<TResponse, TRequest>`，以便把订阅、完成、abort 和 cleanup 控制流收口到单一私有类型里。
-- 流式缓冲当前使用 `AsyncSignalQueue<T>`，而不是本报告早期草图中的 `Channel<T>`。原因是当前实现需要同时承载显式 `Complete` / `Fault` 和 `onDispose` 回调语义。
-- 取消判断故意保留在多个异步边界，而不是追求“只判断一次”：这既用于避免 late request / late response item emit，也用于避免已经取消后继续补发 `ReceiveStreamEnd` 或继续启动 handler。
+- `EventInvoke` and `EventStream` remain two explicit state machines. This
+  refactor only extracted shared mechanisms; it did not introduce a single
+  generic protocol engine.
+- Client-side pending operations are implemented as
+  `PendingInvokeOperation<TResponse, TRequest>` and
+  `PendingStreamInvokeOperation<TResponse, TRequest>` so that subscription,
+  completion, abort, and cleanup control flow all live inside one private type.
+- Streaming currently uses `AsyncSignalQueue<T>` instead of the earlier
+  `Channel<T>` sketch from this report, because the current implementation needs
+  explicit `Complete` / `Fault` semantics and `onDispose` callbacks at the same
+  time.
+- Cancellation checks are intentionally preserved at multiple async boundaries
+  rather than being collapsed into "just once". This prevents late request /
+  late response item emits and also prevents a canceled operation from still
+  sending `ReceiveStreamEnd` or still starting the handler.
 
-本轮提炼出的共享 internal support 类型如下：
+The shared internal support types extracted in this round are:
 
-| 类型 | 当前职责 |
+| Type | Current responsibility |
 |------|----------|
-| `InvokeEventBindings<TResponse, TRequest>` | 将 `InvokeEventDefinition` 一次性物化为 send / receive 相关的具体事件定义 |
-| `ClientCancellation` | 统一客户端取消注册逻辑，处理 `CancellationToken.Register(...)` 的竞态窗口，并保证取消回调至多执行一次 |
-| `HandlerRegistration` | 把协议订阅与 inflight cleanup 合并成单个 `IDisposable` |
-| `InvocationCancellationTracker` | 跟踪 unary handler 的 `invokeId -> CancellationTokenSource` 映射 |
-| `RequestStreamInvocationState<TRequest>` | 保存 request-stream handler 的请求队列、取消源与执行任务 |
-| `RequestStreamInvocationTracker<TRequest>` | 懒创建并先发布 request-stream state，再在锁外启动 handler，并负责统一 abort / dispose inflight 状态 |
+| `InvokeEventBindings<TResponse, TRequest>` | Materializes all send / receive event definitions from `InvokeEventDefinition` in one place |
+| `ClientCancellation` | Centralizes client-side cancellation registration, handles the `CancellationToken.Register(...)` race window, and guarantees the callback runs at most once |
+| `HandlerRegistration` | Combines protocol subscriptions and inflight cleanup into a single `IDisposable` |
+| `InvocationCancellationTracker` | Tracks the unary handler `invokeId -> CancellationTokenSource` map |
+| `RequestStreamInvocationState<TRequest>` | Holds the request queue, cancellation source, and execution task for request-stream handlers |
+| `RequestStreamInvocationTracker<TRequest>` | Lazily creates and publishes request-stream state, starts the handler outside the lock, and owns abort / dispose for inflight state |
 
-当前实现还保留了几个已经被测试锚定的约束，后续重构不应随意抹平：
+The current implementation still preserves several constraints that are already
+anchored by tests and should not be casually erased in future refactors:
 
-- `EventInvoke` 的 `EmitRequest()` 需要在发送前检查 `_finished`，因为 fatal-event 订阅可能在 request emit 之前就先完成该 invoke。
-- `EventStream` 的 request-stream sender 在客户端提前取消或提前 dispose 时，不应再枚举输入流，也不应补发晚到的 request item。
-- request-stream handler 的“pre-first-item abort” 在 C# 原型中仍然是受支持契约，即使当前 TypeScript 对 `send-stream-end` 的 unknown invokeId 处理更保守。
+- `EventInvoke.EmitRequest()` must check `_finished` before sending because a
+  fatal-event subscription may complete the invoke before the request emit
+- The request-stream sender in `EventStream` must stop enumerating input and
+  must not emit late request items after early client cancellation or early
+  enumerator disposal
+- The request-stream handler contract still supports "pre-first-item abort" in
+  the C# prototype, even though the current TypeScript implementation is more
+  conservative when handling unknown invoke IDs on `send-stream-end`
 
 ---
 
-## 4. 适配器抽象层
+## 4. Adapter Abstraction Layer
 
-### 4.1 已有 Eventa 适配器及 C# 等价方案
+### 4.1 Existing Eventa Adapters and Their C# Equivalents
 
-| TS 适配器 | C# .NET 等价传输层 | 实现难度 |
-|----------|-------------------|---------|
-| EventTarget | 内存直连（`EventContext` 本身） | ⭐ 低 |
-| EventEmitter | 内存直连 / 自定义 `IObservable<T>` | ⭐ 低 |
-| BroadcastChannel | `System.Threading.Channels` / 进程内管道 | ⭐ 低 |
-| WebSocket (client) | `System.Net.WebSockets.ClientWebSocket` | ⭐⭐ 中 |
-| WebSocket (H3 server) | ASP.NET Core WebSocket middleware / SignalR | ⭐⭐ 中 |
-| Electron Main/Renderer | 不适用（Electron 是 JS 生态特有） | N/A |
-| Web Worker | 不适用 | N/A |
-| Worker Threads | `System.Threading` / Channel 跨线程 | ⭐⭐ 中 |
+| TS adapter | Equivalent C# /.NET transport | Implementation difficulty |
+|------|------|------|
+| EventTarget | In-memory direct wiring (`EventContext` itself) | Low |
+| EventEmitter | In-memory direct wiring / custom `IObservable<T>` | Low |
+| BroadcastChannel | `System.Threading.Channels` / in-process pipes | Low |
+| WebSocket (client) | `System.Net.WebSockets.ClientWebSocket` | Medium |
+| WebSocket (H3 server) | ASP.NET Core WebSocket middleware / SignalR | Medium |
+| Electron Main/Renderer | Not applicable (Electron is JS-specific) | N/A |
+| Web Worker | Not applicable | N/A |
+| Worker Threads | `System.Threading` / `Channel` across threads | Medium |
 
-### 4.2 推荐首批适配器
+### 4.2 Recommended First Adapters
 
-1. **InMemory**（`EventContext` 直连，测试用）— 优先级 P0
-2. **Channel（跨线程/进程内管道）** — 优先级 P0
-3. **WebSocket**（`ClientWebSocket` + ASP.NET Core） — 优先级 P1
-4. **SignalR** — 优先级 P2（SignalR 本身已有 streaming hub，但 Eventa 抽象层统一了 API）
-5. **gRPC**（`Grpc.Net.Client` / `Grpc.AspNetCore`） — 优先级 P2
+1. **InMemory** (`EventContext` loopback, mainly for tests) - Priority P0
+2. **Channel** (cross-thread / in-process pipes) - Priority P0
+3. **WebSocket** (`ClientWebSocket` + ASP.NET Core) - Priority P1
+4. **SignalR** - Priority P2. SignalR already has built-in streaming hub support,
+   but Eventa would still unify the API surface
+5. **gRPC** (`Grpc.Net.Client` / `Grpc.AspNetCore`) - Priority P2
 
-### 4.3 适配器 Hooks 映射
+### 4.3 Adapter Hook Mapping
 
 ```csharp
 public interface IEventaAdapter : IDisposable
@@ -576,7 +647,7 @@ public interface IEventaAdapter : IDisposable
     void OnReceived(string eventId, object envelope);
 }
 
-// WebSocket 适配器示例
+// Example WebSocket adapter
 public class WebSocketAdapter : IEventaAdapter
 {
     private readonly WebSocket _ws;
@@ -590,31 +661,32 @@ public class WebSocketAdapter : IEventaAdapter
 
     public void OnReceived(string eventId, object envelope)
     {
-        // 观测 hook，可用于日志/指标；若 eventId 是 match-expression id，可从 envelope.EventId 取原始事件 ID
+        // Observation hook for logging/metrics. If eventId is a match-expression id,
+        // the original event id is still available through envelope.EventId.
     }
 
-    // 构造函数中启动接收循环，收到消息后调用 emit
+    // Start the receive loop in the constructor and emit into the context from there
 }
 ```
 
 ---
 
-## 5. 测试策略映射
+## 5. Test Strategy Mapping
 
-### 5.1 框架对照
+### 5.1 Framework Mapping
 
 | TS (Vitest) | C# (.NET 10) |
-|-------------|-------------|
-| `describe` / `it` | xUnit `[Fact]` / `[Theory]` + 嵌套类 |
-| `vi.fn()` | NSubstitute `Substitute.For<T>()` 或 Moq `Mock<T>()` |
+|------|------|
+| `describe` / `it` | xUnit `[Fact]` / `[Theory]` + nested classes |
+| `vi.fn()` | NSubstitute `Substitute.For<T>()` or Moq `Mock<T>()` |
 | `expect(x).toBe(y)` | FluentAssertions `x.Should().Be(y)` |
 | `expect(promise).rejects.toThrowError()` | `await act.Should().ThrowAsync<Exception>()` |
-| `expectTypeOf<T>()` | 编译期测试（C# 强类型语言天然满足） |
+| `expectTypeOf<T>()` | Compile-time tests (already native in a strongly typed C# language) |
 | `await sleep(ms)` | `await Task.Delay(ms)` |
 
-### 5.2 每个测试场景的 C# 等价写法概要
+### 5.2 Outline of Equivalent C# Test Shapes
 
-#### EventContext 基础测试
+#### EventContext Tests
 
 ```csharp
 public class EventContextTests
@@ -663,7 +735,7 @@ public class EventContextTests
 }
 ```
 
-#### Invoke 测试
+#### Invoke Tests
 
 ```csharp
 public class InvokeTests
@@ -709,7 +781,7 @@ public class InvokeTests
         using var handler = EventInvoke.DefineInvokeHandler(ctx, events,
             async (_, ct) =>
             {
-                await Task.Delay(Timeout.Infinite, ct); // 等待取消
+                await Task.Delay(Timeout.Infinite, ct); // wait for cancellation
                 return "ok";
             });
 
@@ -738,18 +810,18 @@ public class InvokeTests
             invoke(20, default),
             invoke(50, default));
 
-        results.Should().BeEquivalentTo(new[] { 20, 40, 100 });
+        results.Should().Equal(20, 40, 100);
     }
 }
 ```
 
-#### Stream 测试
+#### Stream Tests
 
 ```csharp
 public class StreamTests
 {
     [Fact]
-    public async Task Should_HandleServerStreaming()
+    public async Task Should_StreamServerResponses()
     {
         var ctx = EventContext.Create();
         var events = Eventa.DefineInvoke<ProgressOrResult, JobRequest>();
@@ -758,8 +830,11 @@ public class StreamTests
             async (req, ct) => ServerStreamImpl(req, ct));
 
         var results = new List<ProgressOrResult>();
-        await foreach (var item in EventStream.DefineStreamInvoke(ctx, events,
-            new JobRequest("alice"), default))
+        await foreach (var item in EventStream.DefineStreamInvoke(
+            ctx,
+            events,
+            new JobRequest("alice"),
+            default))
         {
             results.Add(item);
         }
@@ -775,6 +850,7 @@ public class StreamTests
         {
             yield return new ProgressOrResult.Progress(i * 20);
         }
+
         yield return new ProgressOrResult.Result(true);
     }
 }
@@ -782,116 +858,129 @@ public class StreamTests
 
 ---
 
-## 6. 推荐项目结构
+## 6. Recommended Project Structure
 
 ```
 Eventa.sln
 ├── src/
-│   ├── Eventa.Core/                     # 核心库
+│   ├── Eventa.Core/                     # Core library
 │   │   ├── EventDefinition.cs           # record EventDefinition<T>
-│   │   ├── EventContext.cs              # IEventContext 实现
-│   │   ├── InvokeEventDefinition.cs     # InvokeEventa 7 事件对
-│   │   ├── EventInvoke.cs              # defineInvoke / defineInvokeHandler
-│   │   ├── EventStream.cs             # defineStreamInvoke / defineStreamInvokeHandler
-│   │   ├── MatchExpression.cs          # matchBy / and / or
-│   │   ├── IEventaAdapter.cs           # 适配器接口
-│   │   └── IdGenerator.cs              # nanoid 等价
+│   │   ├── EventContext.cs              # IEventContext implementation
+│   │   ├── InvokeEventDefinition.cs     # the 7 related invoke events
+│   │   ├── EventInvoke.cs               # defineInvoke / defineInvokeHandler
+│   │   ├── EventStream.cs               # defineStreamInvoke / defineStreamInvokeHandler
+│   │   ├── MatchExpression.cs           # matchBy / and / or
+│   │   ├── IEventaAdapter.cs            # adapter interface
+│   │   └── IdGenerator.cs               # nanoid equivalent
 │   │
-│   ├── Eventa.Adapters.WebSocket/       # WebSocket 适配器
-│   ├── Eventa.Adapters.SignalR/         # SignalR 适配器
-│   ├── Eventa.Adapters.Channels/        # System.Threading.Channels 适配器
-│   └── Eventa.Adapters.Grpc/           # gRPC 适配器
+│   ├── Eventa.Adapters.WebSocket/       # WebSocket adapter
+│   ├── Eventa.Adapters.SignalR/         # SignalR adapter
+│   ├── Eventa.Adapters.Channels/        # System.Threading.Channels adapter
+│   └── Eventa.Adapters.Grpc/            # gRPC adapter
 │
 ├── tests/
-│   ├── Eventa.Core.Tests/              # 核心单元测试
+│   ├── Eventa.Core.Tests/               # Core unit tests
 │   │   ├── EventContextTests.cs
 │   │   ├── InvokeTests.cs
 │   │   ├── StreamTests.cs
 │   │   └── MatchExpressionTests.cs
 │   │
-│   └── Eventa.Adapters.Tests/          # 适配器集成测试
+│   └── Eventa.Adapters.Tests/           # Adapter integration tests
 │
 └── samples/
-    ├── Eventa.Sample.Console/           # 控制台示例
-    └── Eventa.Sample.WebApi/           # ASP.NET Core 示例
+    ├── Eventa.Sample.Console/           # Console sample
+    └── Eventa.Sample.WebApi/            # ASP.NET Core sample
 ```
 
-**NuGet 包划分**：
+**NuGet package split**:
 
-| 包名 | 内容 | 依赖 |
+| Package | Contents | Dependencies |
 |------|------|------|
-| `Eventa.Core` | 事件定义、Context、Invoke、Stream | 无外部依赖 |
-| `Eventa.Adapters.WebSocket` | WebSocket 适配器 | `Eventa.Core` |
-| `Eventa.Adapters.SignalR` | SignalR 适配器 | `Eventa.Core` + `Microsoft.AspNetCore.SignalR` |
-| `Eventa.Adapters.Grpc` | gRPC 适配器 | `Eventa.Core` + `Grpc.Net.Client` |
+| `Eventa.Core` | Event definitions, Context, Invoke, Stream | No external dependencies |
+| `Eventa.Adapters.WebSocket` | WebSocket adapter | `Eventa.Core` |
+| `Eventa.Adapters.SignalR` | SignalR adapter | `Eventa.Core` + `Microsoft.AspNetCore.SignalR` |
+| `Eventa.Adapters.Grpc` | gRPC adapter | `Eventa.Core` + `Grpc.Net.Client` |
 
 ---
 
-## 7. 风险与差异
+## 7. Risks and Differences
 
-### 7.1 无直接对应的 TS 特性
+### 7.1 TS Features Without a Direct Equivalent
 
-| TS 特性 | 影响 | C# 替代方案 |
-|---------|------|------------|
-| 条件类型 (`T extends X ? Y : Z`) | Invoke 函数签名中根据 Req 是否 undefined 决定参数可选 | 提供多个重载（`Invoke()` 和 `Invoke(TReq req)`） |
-| `Transferable` / Structured Clone | `withTransfer()` 不适用 | 不需要：C# 跨进程通信使用序列化，无 Structured Clone 概念 |
-| glob 匹配 (`picomatch`) | `matchBy('pattern*')` | 使用 `Microsoft.Extensions.FileSystemGlobbing` 或正则表达式 |
-| Function Stub 序列化 | `withRemoteMethods()` 将函数序列化为标记 | **低优先级**：C# 中 delegate 不可序列化，需要不同设计（如注册命名服务）。建议作为 v2 特性 |
-
-### 7.2 必须额外考虑的 C# 问题
-
-| 问题 | 说明 | 建议 |
+| TS feature | Impact | C# alternative |
 |------|------|------|
-| **线程安全** | TS 单线程无需同步；C# 多线程环境必须考虑 | 内部使用 `ConcurrentDictionary` + `lock`/`ReaderWriterLockSlim` |
-| **内存泄漏** | TS 依赖 GC 和闭包；C# 中事件订阅是强引用 | `On()` 返回 `IDisposable`，强烈建议 `using` 语法 |
-| **异常传播** | TS catch 所有类型；C# 区分 `Exception`/`OperationCanceledException` | Handler 异常包装为 `EventaInvokeException`，取消使用 `OperationCanceledException` |
-| **序列化** | TS 使用 JSON/Structured Clone；C# 需要显式选择 | 默认 `System.Text.Json`，适配器可插入自定义 `IEventaSerializer` |
-| **性能** | `Channel<T>` 高吞吐替代 TS `ReadableStream` | 使用 `BoundedChannelOptions` 控制背压 |
+| Conditional types (`T extends X ? Y : Z`) | Invoke signatures can make parameters optional when `Req` is `undefined` | Provide multiple overloads (`Invoke()` and `Invoke(TReq req)`) |
+| `Transferable` / Structured Clone | `withTransfer()` has no direct meaning | Not needed: C# cross-process communication already uses serialization |
+| Glob matching (`picomatch`) | `matchBy("pattern*")` | Use `Microsoft.Extensions.FileSystemGlobbing` or regex |
+| Function-stub serialization | `withRemoteMethods()` serializes functions into markers | **Lower priority**: delegates are not serializable in C# and need a different design such as named service registration |
 
-### 7.3 不迁移的部分
+### 7.2 C#-Specific Concerns That Must Be Addressed
 
-- **Function Stub (`withRemoteMethods`)** — 标记为低优先级。TS 中利用函数是一等公民的特性实现自动序列化，C# 中 delegate 不可跨进程传递。如需类似功能，建议使用「命名服务注册」模式
-- **`withTransfer`** — Structured Clone Transfer 是浏览器特有概念，C# 不需要
-- **Electron 适配器** — 纯 JS 生态
+| Concern | Explanation | Recommendation |
+|------|------|------|
+| **Thread safety** | TS is single-threaded; C# must handle concurrent access | Use `ConcurrentDictionary` plus `lock`/`ReaderWriterLockSlim` where needed |
+| **Memory leaks** | TS relies on GC and closures; C# event subscriptions are strong references | `On()` should return `IDisposable`; encourage `using` |
+| **Exception propagation** | TS catches everything uniformly; C# distinguishes `Exception` and `OperationCanceledException` | Wrap handler errors in `EventaInvokeException`; preserve `OperationCanceledException` for cancellation |
+| **Serialization** | TS uses JSON / Structured Clone; C# must choose explicitly | Default to `System.Text.Json`; let adapters plug in `IEventaSerializer` |
+| **Performance** | `Channel<T>` can outperform TS `ReadableStream` for high-throughput buffering | Use `BoundedChannelOptions` to control backpressure |
 
----
+### 7.3 Areas Not Worth Migrating Directly
 
-## 8. 实施路线图建议
-
-### Phase 1 — 核心库（Eventa.Core）
-
-1. `EventDefinition<T>` / `InvokeEventDefinition<TRes, TReq>` record 定义
-2. `EventContext`（内存直连，emit/on/once/off）
-3. `DefineInvoke` / `DefineInvokeHandler`（含 CancellationToken、流式输入）
-4. `DefineStreamInvoke` / `DefineStreamInvokeHandler`（IAsyncEnumerable）
-5. `MatchExpression`、`And()`、`Or()`
-6. 完整单元测试（映射自 TS 所有 spec）
-
-### Phase 2 — 适配器
-
-1. WebSocket 适配器（ClientWebSocket + ASP.NET Core middleware）
-2. Channel 适配器（跨线程管道）
-3. SignalR 适配器
-
-### Phase 3 — 高级特性
-
-1. Context 扩展（`extensions` 字典 + abort event 注册）
-2. `toStreamHandler` 辅助
-3. 全局元数据 (`metadata` / `invokeMetadata`)
-4. 序列化器抽象 (`IEventaSerializer`)
+- **Function Stub (`withRemoteMethods`)**: lower priority. TS can do this because
+  functions are first-class and easy to wrap; C# delegates are not portable
+  across processes. If needed later, prefer a named-service registration model.
+- **`withTransfer`**: Structured Clone transfer is browser-specific and not
+  needed in .NET.
+- **Electron adapter**: specific to the JavaScript ecosystem.
 
 ---
 
-## 9. 结论
+## 8. Recommended Implementation Roadmap
 
-**迁移完全可行**。Eventa 的核心设计（事件定义 → Context 发布/订阅 → 7 事件协议 Invoke/Stream → 适配器 hooks）在 C# .NET 10 中均有惯用且更强大的对应方案：
+### Phase 1 - Core Library (`Eventa.Core`)
 
-- `record` 替代 plain object 事件定义，天然不可变 + 值相等
-- `IDisposable` 替代 `() => void` 取消函数，与 `using` 语法集成
-- `Task<T>` / `ValueTask<T>` 替代 `Promise<T>`，async/await 完全对应
-- `CancellationToken` 替代 `AbortSignal`，更成熟的取消模型
-- `IAsyncEnumerable<T>` 替代 `AsyncGenerator` / `ReadableStream`，一等公民支持
-- `Channel<T>` 提供高性能异步缓冲，替代 TS 中手动管理的 `ReadableStream`
-- 线程安全可通过 `ConcurrentDictionary` / `Channel` / `lock` 自然解决
+1. Define `EventDefinition<T>` / `InvokeEventDefinition<TRes, TReq>` as records
+2. Implement `EventContext` (in-memory loopback, emit/on/once/off)
+3. Implement `DefineInvoke` / `DefineInvokeHandler` (including
+   `CancellationToken` and streaming request input)
+4. Implement `DefineStreamInvoke` / `DefineStreamInvokeHandler`
+   (`IAsyncEnumerable`)
+5. Implement `MatchExpression`, `And()`, and `Or()`
+6. Port the full unit-test matrix from the TS specs
 
-核心库预计代码量约 800-1200 行（不含测试），与 TS 版体量相当。
+### Phase 2 - Adapters
+
+1. WebSocket adapter (`ClientWebSocket` + ASP.NET Core middleware)
+2. Channel adapter (cross-thread pipe)
+3. SignalR adapter
+
+### Phase 3 - Advanced Features
+
+1. Context extensions (`Extensions` dictionary + abort-event registration)
+2. `toStreamHandler` helper
+3. Global metadata (`metadata` / `invokeMetadata`)
+4. Serializer abstraction (`IEventaSerializer`)
+
+---
+
+## 9. Conclusion
+
+**The migration is fully feasible.** Eventa's core design
+(event definitions -> Context publish/subscribe -> 7-event invoke/stream
+protocol -> adapter hooks) maps naturally onto stronger and more idiomatic
+primitives in C# .NET 10:
+
+- `record` replaces plain-object event definitions with immutable value types
+- `IDisposable` replaces `() => void` unsubscribe functions and integrates with
+  `using`
+- `Task<T>` / `ValueTask<T>` replace `Promise<T>` with native async/await support
+- `CancellationToken` replaces `AbortSignal` with a mature cancellation model
+- `IAsyncEnumerable<T>` replaces `AsyncGenerator` / `ReadableStream` as a
+  first-class async-stream abstraction
+- `Channel<T>` can provide high-performance async buffering instead of manually
+  managed `ReadableStream`
+- Thread safety can be handled cleanly through `ConcurrentDictionary`,
+  `Channel`, and `lock`
+
+The core library is likely to land around 800-1200 lines of code excluding
+tests, which is roughly in the same size range as the TS implementation.

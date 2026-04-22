@@ -2,7 +2,7 @@ namespace Eventa;
 
 public static class EventStream
 {
-    // Client invoke API
+    #region Client Invoke API
 
     public static IAsyncEnumerable<TResponse> DefineStreamInvoke<TResponse, TRequest>(
         IEventContext context,
@@ -70,7 +70,9 @@ public static class EventStream
             });
     }
 
-    // Handler registration API
+    #endregion
+
+    #region Handler Registration API
 
     public static IDisposable DefineStreamInvokeHandler<TResponse, TRequest>(
         IEventContext context,
@@ -231,7 +233,9 @@ public static class EventStream
         return new HandlerRegistration(subscriptions, inflight.AbortAllAndDispose);
     }
 
-    // Handler adapters
+    #endregion
+
+    #region Handler Adapters
 
     public static Func<TRequest, CancellationToken, IAsyncEnumerable<TResponse>> ToStreamHandler<TResponse, TRequest>(
         Func<TRequest, Func<TResponse, ValueTask>, CancellationToken, Task> handler)
@@ -266,7 +270,9 @@ public static class EventStream
         };
     }
 
-    // Client operation
+    #endregion
+
+    #region Client Operation
 
     private static IAsyncEnumerable<TResponse> CreateStreamInvoke<TResponse, TRequest>(
         IEventContext context,
@@ -432,11 +438,15 @@ public static class EventStream
         }
     }
 
-    // Support
+    #endregion
+
+    #region Support
 
     private enum SendDispatchMode
     {
         InlineAfterCancellationArmed,
         QueueOnThreadPool,
     }
+
+    #endregion
 }
