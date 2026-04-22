@@ -15,8 +15,14 @@ public static class EventStream
             context,
             eventDefinition,
             cancellationToken,
-            (invokeId, _) =>
+            runSendRequestInline: true,
+            (invokeId, requestCancellationToken) =>
             {
+                if (requestCancellationToken.IsCancellationRequested)
+                {
+                    return Task.CompletedTask;
+                }
+
                 var sendEvent = new EventDefinition<SendPayload<TRequest>>(eventDefinition.SendEventId);
                 context.Emit(sendEvent, new SendPayload<TRequest>(invokeId, request));
                 return Task.CompletedTask;
@@ -37,6 +43,7 @@ public static class EventStream
             context,
             eventDefinition,
             cancellationToken,
+            runSendRequestInline: false,
             async (invokeId, requestCancellationToken) =>
             {
                 var sendEvent = new EventDefinition<SendPayload<TRequest>>(eventDefinition.SendEventId);
@@ -46,23 +53,16 @@ public static class EventStream
                 {
                     await foreach (var item in request.WithCancellation(requestCancellationToken).ConfigureAwait(false))
                     {
-                        if (requestCancellationToken.IsCancellationRequested)
-                        {
-                            return;
-                        }
+                        if (requestCancellationToken.IsCancellationRequested) return;
 
                         context.Emit(sendEvent, new SendPayload<TRequest>(invokeId, item));
                     }
                 }
-                catch (OperationCanceledException) when (requestCancellationToken.IsCancellationRequested)
-                {
-                    return;
-                }
+                catch (OperationCanceledException) when (requestCancellationToken.IsCancellationRequested) { return; }
 
-                if (!requestCancellationToken.IsCancellationRequested)
-                {
-                    context.Emit(sendStreamEndEvent, new StreamEndPayload(invokeId));
-                }
+                if (requestCancellationToken.IsCancellationRequested) return;
+
+                context.Emit(sendStreamEndEvent, new StreamEndPayload(invokeId));
             });
     }
 
@@ -96,26 +96,21 @@ public static class EventStream
             {
                 await foreach (var item in handler(request, cancellationSource.Token).ConfigureAwait(false))
                 {
-                    if (cancellationSource.IsCancellationRequested)
-                    {
-                        return;
-                    }
+                    if (cancellationSource.IsCancellationRequested) return;
 
                     context.Emit(receiveEvent, new ReceivePayload<TResponse>(invokeId, item));
                 }
 
-                if (!cancellationSource.IsCancellationRequested)
-                {
-                    context.Emit(receiveStreamEndEvent, new StreamEndPayload(invokeId));
-                }
+                if (cancellationSource.IsCancellationRequested) return;
+
+                context.Emit(receiveStreamEndEvent, new StreamEndPayload(invokeId));
             }
-            catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested) { return; }
             catch (Exception error)
             {
-                if (!cancellationSource.IsCancellationRequested)
-                {
-                    context.Emit(receiveErrorEvent, new ReceiveErrorPayload(invokeId, error));
-                }
+                if (cancellationSource.IsCancellationRequested) return;
+
+                context.Emit(receiveErrorEvent, new ReceiveErrorPayload(invokeId, error));
             }
             finally
             {
@@ -185,10 +180,7 @@ public static class EventStream
         {
             lock (sync)
             {
-                if (inflight.TryGetValue(invokeId, out var existing))
-                {
-                    return existing;
-                }
+                if (inflight.TryGetValue(invokeId, out var existing)) return existing;
 
                 var created = new RequestStreamInvocationState<TRequest>(invokeId);
                 inflight[invokeId] = created;
@@ -205,26 +197,21 @@ public static class EventStream
                     state.Requests.ReadAll(respectConsumerCancellation: false),
                     state.CancellationSource.Token).ConfigureAwait(false))
                 {
-                    if (state.CancellationSource.IsCancellationRequested)
-                    {
-                        return;
-                    }
+                    if (state.CancellationSource.IsCancellationRequested) return;
 
                     context.Emit(receiveEvent, new ReceivePayload<TResponse>(state.InvokeId, item));
                 }
 
-                if (!state.CancellationSource.IsCancellationRequested)
-                {
-                    context.Emit(receiveStreamEndEvent, new StreamEndPayload(state.InvokeId));
-                }
+                if (state.CancellationSource.IsCancellationRequested) return;
+
+                context.Emit(receiveStreamEndEvent, new StreamEndPayload(state.InvokeId));
             }
-            catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested) { return; }
             catch (Exception error)
             {
-                if (!state.CancellationSource.IsCancellationRequested)
-                {
-                    context.Emit(receiveErrorEvent, new ReceiveErrorPayload(state.InvokeId, error));
-                }
+                if (state.CancellationSource.IsCancellationRequested) return;
+
+                context.Emit(receiveErrorEvent, new ReceiveErrorPayload(state.InvokeId, error));
             }
             finally
             {
@@ -320,6 +307,7 @@ public static class EventStream
         IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
         CancellationToken cancellationToken,
+        bool runSendRequestInline,
         Func<string, CancellationToken, Task> sendRequest)
     {
         var invokeId = IdGenerator.New();
@@ -345,10 +333,7 @@ public static class EventStream
 
         void Finish(Exception? error, bool emitAbort)
         {
-            if (Interlocked.Exchange(ref finished, 1) != 0)
-            {
-                return;
-            }
+            if (Interlocked.Exchange(ref finished, 1) != 0) return;
 
             requestCancellationSource.Cancel();
 
@@ -387,10 +372,7 @@ public static class EventStream
 
         bool TryArmClientCancellation()
         {
-            if (!cancellationToken.CanBeCanceled)
-            {
-                return true;
-            }
+            if (!cancellationToken.CanBeCanceled) return true;
 
             if (cancellationToken.IsCancellationRequested)
             {
@@ -419,30 +401,21 @@ public static class EventStream
 
         subscriptions.Add(context.On(receiveEvent, envelope =>
         {
-            if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId))
-            {
-                return;
-            }
+            if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId)) return;
 
             responses.TryWrite(envelope.Body.Content);
         }));
 
         subscriptions.Add(context.On(receiveErrorEvent, envelope =>
         {
-            if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId))
-            {
-                return;
-            }
+            if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId)) return;
 
             Fault(envelope.Body.Error);
         }));
 
         subscriptions.Add(context.On(receiveStreamEndEvent, envelope =>
         {
-            if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId))
-            {
-                return;
-            }
+            if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId)) return;
 
             Complete();
         }));
@@ -452,18 +425,30 @@ public static class EventStream
             return responses.ReadAll(onDispose: () => ValueTask.CompletedTask);
         }
 
-        _ = Task.Run(async () =>
+        async Task ExecuteSendRequestAsync()
         {
             try
             {
                 await sendRequest(invokeId, requestCancellationToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (requestCancellationToken.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (requestCancellationToken.IsCancellationRequested) { return; }
             catch (Exception error)
             {
                 Fault(error);
             }
-        }, CancellationToken.None);
+        }
+
+        if (runSendRequestInline)
+        {
+            // Keep unary request dispatch inline once cancellation is armed so
+            // an early abort or enumerator disposal cannot be overtaken by a
+            // queued Task.Run send that starts the handler afterward.
+            ExecuteSendRequestAsync().GetAwaiter().GetResult();
+        }
+        else
+        {
+            _ = Task.Run(ExecuteSendRequestAsync, CancellationToken.None);
+        }
 
         return responses.ReadAll(onDispose: () =>
         {

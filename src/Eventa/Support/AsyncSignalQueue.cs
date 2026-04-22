@@ -106,19 +106,13 @@ internal sealed class AsyncSignalEnumerator<T>(
         {
             while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                if (!reader.TryRead(out var item))
-                {
-                    continue;
-                }
+                if (!reader.TryRead(out var item)) { continue; }
 
                 Current = item;
                 return true;
             }
         }
-        catch (Exception) when (ShouldSurfaceTerminalException())
-        {
-            throw;
-        }
+        catch (Exception) when (ShouldSurfaceTerminalException()) { throw; }
 
         _isTerminal = true;
         return false;
@@ -130,10 +124,7 @@ internal sealed class AsyncSignalEnumerator<T>(
     /// </summary>
     private bool ShouldSurfaceTerminalException()
     {
-        if (cancellationToken.IsCancellationRequested)
-        {
-            return false;
-        }
+        if (cancellationToken.IsCancellationRequested) return false;
 
         _isTerminal = true;
         return true;
@@ -145,17 +136,11 @@ internal sealed class AsyncSignalEnumerator<T>(
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _isDisposed, 1) != 0)
-        {
-            return;
-        }
+        if (Interlocked.Exchange(ref _isDisposed, 1) != 0) return;
 
         // Only notify the owner when enumeration stops early. Once a terminal
         // signal has been observed, upstream cleanup has already happened.
-        if (_isTerminal || onDispose is null)
-        {
-            return;
-        }
+        if (_isTerminal || onDispose is null) return;
 
         await onDispose().ConfigureAwait(false);
     }

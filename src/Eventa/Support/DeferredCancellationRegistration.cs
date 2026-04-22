@@ -26,18 +26,17 @@ internal sealed class DeferredCancellationRegistration : IDisposable
     /// </exception>
     public void Attach(CancellationTokenRegistration registration)
     {
-        _registration = registration;
-
         if (Interlocked.Exchange(ref _isAttached, 1) != 0)
         {
             registration.Dispose();
             throw new InvalidOperationException("Cancellation registration already attached.");
         }
 
-        if (Volatile.Read(ref _isDisposed) != 0)
-        {
-            _registration.Dispose();
-        }
+        _registration = registration;
+
+        if (Volatile.Read(ref _isDisposed) == 0) return;
+
+        registration.Dispose();
     }
 
     /// <summary>
@@ -46,14 +45,10 @@ internal sealed class DeferredCancellationRegistration : IDisposable
     /// </summary>
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _isDisposed, 1) != 0)
-        {
-            return;
-        }
+        if (Interlocked.Exchange(ref _isDisposed, 1) != 0) return;
 
-        if (Volatile.Read(ref _isAttached) != 0)
-        {
-            _registration.Dispose();
-        }
+        if (Volatile.Read(ref _isAttached) == 0) return;
+
+        _registration.Dispose();
     }
 }

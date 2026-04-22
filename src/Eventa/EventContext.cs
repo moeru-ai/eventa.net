@@ -77,10 +77,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
 
             foreach (var registration in _matchListeners.Values)
             {
-                if (!registration.Matcher(envelope))
-                {
-                    continue;
-                }
+                if (!registration.Matcher(envelope)) { continue; }
 
                 foreach (var handler in registration.Listeners.Cast<Action<EventEnvelope<TPayload>>>())
                 {
@@ -238,10 +235,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
     {
         lock (_sync)
         {
-            if (!_matchListeners.TryGetValue(matchExpressionId, out var registration))
-            {
-                return;
-            }
+            if (!_matchListeners.TryGetValue(matchExpressionId, out var registration)) return;
 
             registration.Listeners.Remove(handler);
             if (registration.Listeners.Count == 0)
@@ -256,10 +250,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         Delegate handler,
         IDictionary<string, HashSet<Delegate>> registry)
     {
-        if (!registry.TryGetValue(eventId, out var listeners))
-        {
-            return;
-        }
+        if (!registry.TryGetValue(eventId, out var listeners)) return;
 
         listeners.Remove(handler);
         if (listeners.Count == 0)
@@ -322,19 +313,13 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         Type currentType,
         string operation)
     {
-        if (registry.TryGetValue(id, out var boundType))
-        {
-            if (boundType != currentType)
-            {
-                var bindingTarget = DescribeBindingTarget(binding);
+        if (!registry.TryGetValue(id, out var boundType) || boundType == currentType) return;
 
-                throw new InvalidOperationException(
-                    $"Cannot perform '{operation}' for {bindingTarget} '{id}' with payload type '{FormatTypeName(currentType)}' " +
-                    $"because this EventContext already bound {bindingTarget} '{id}' to payload type '{FormatTypeName(boundType)}'.");
-            }
+        var bindingTarget = DescribeBindingTarget(binding);
 
-            return;
-        }
+        throw new InvalidOperationException(
+            $"Cannot perform '{operation}' for {bindingTarget} '{id}' with payload type '{FormatTypeName(currentType)}' " +
+            $"because this EventContext already bound {bindingTarget} '{id}' to payload type '{FormatTypeName(boundType)}'.");
     }
 
     private static string DescribeBindingTarget<TBinding>(TBinding binding)

@@ -262,6 +262,73 @@ public class StreamTests
     }
 
     [Fact]
+    public async Task DisposingAsyncEnumerator_BeforeQueuedUnarySend_DoesNotLeaveALateHandlerRunning()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("cancel-unary-before-send");
+        var handlerStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handlerCanceled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disposed = 0;
+        var lateHandlerStarts = 0;
+        var workerCount = Math.Max(8, Environment.ProcessorCount * 2);
+        ThreadPool.GetMinThreads(out var originalMinWorkerThreads, out var originalMinCompletionPortThreads);
+        using var releaseWorkers = new ManualResetEventSlim(false);
+        using var workersStarted = new CountdownEvent(workerCount);
+        var blockers = Enumerable.Range(0, workerCount)
+            .Select(_ => Task.Run(() =>
+            {
+                workersStarted.Signal();
+                releaseWorkers.Wait(TestContext.Current.CancellationToken);
+            }))
+            .ToArray();
+
+        ThreadPool.SetMinThreads(
+            Math.Max(originalMinWorkerThreads, workerCount),
+            originalMinCompletionPortThreads);
+
+        async IAsyncEnumerable<int> Handler(
+            int request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            if (Volatile.Read(ref disposed) != 0)
+            {
+                Interlocked.Increment(ref lateHandlerStarts);
+            }
+
+            handlerStarted.TrySetResult(true);
+
+            using var registration = cancellationToken.Register(() => handlerCanceled.TrySetResult(true));
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield return request;
+        }
+
+        using var _ = EventStream.DefineStreamInvokeHandler(context, definition, Handler);
+
+        try
+        {
+            Assert.True(workersStarted.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+
+            var stream = EventStream.DefineStreamInvoke(context, definition, 7, CancellationToken.None);
+            await using var enumerator = stream.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+            await enumerator.DisposeAsync();
+            Interlocked.Exchange(ref disposed, 1);
+
+            releaseWorkers.Set();
+            await Task.WhenAll(blockers).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            await handlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            await handlerCanceled.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            Assert.Equal(0, Volatile.Read(ref lateHandlerStarts));
+        }
+        finally
+        {
+            releaseWorkers.Set();
+            ThreadPool.SetMinThreads(originalMinWorkerThreads, originalMinCompletionPortThreads);
+        }
+    }
+
+    [Fact]
     public async Task DisposingAsyncEnumerator_StopsRequestStreamSender_AndPreventsLateRequests()
     {
         var context = new EventContext();

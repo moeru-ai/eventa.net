@@ -40,6 +40,7 @@ Current C# target: `StreamTests.cs`
 - Extra C# contract: empty request streams are intentionally supported both through the public `IAsyncEnumerable<TRequest>` input path and at the protocol layer by materializing a handler when `sendEventStreamEnd` arrives before the first item, even though current TypeScript `stream.ts` ignores `sendEventStreamEnd` for unknown `invokeId`.
 - Extra C# contract: in bidirectional request streams, disposing the response async enumerator or letting the handler complete the response stream early cancels the outbound request producer and prevents late request items or accidental reinvocation.
 - Extra C# contract: a pre-canceled client token emits a single abort without sending the unary request payload, and a pre-canceled request-stream invoke does not enumerate the outbound request source at all.
+- Extra C# contract: a unary stream invoke that is disposed before its queued send could run does not leave a late-starting handler behind; once client cleanup wins, the initial unary send must not be deferred past that cleanup boundary.
 - Extra C# contract: request producers can safely register a cancellation callback after client cancellation has already happened; the late registration is invoked without throwing.
 - Parity note: current TypeScript `stream.ts` still materializes state on unknown-id abort so the handler can observe cancellation.
 

@@ -45,10 +45,7 @@ public static class EventInvoke
 
             void CompleteSuccessfully(TResponse response)
             {
-                if (Interlocked.Exchange(ref finished, 1) != 0)
-                {
-                    return;
-                }
+                if (Interlocked.Exchange(ref finished, 1) != 0) return;
 
                 completion.TrySetResult(response);
                 Cleanup();
@@ -56,10 +53,7 @@ public static class EventInvoke
 
             void CompleteFaulted(Exception error)
             {
-                if (Interlocked.Exchange(ref finished, 1) != 0)
-                {
-                    return;
-                }
+                if (Interlocked.Exchange(ref finished, 1) != 0) return;
 
                 completion.TrySetException(error);
                 Cleanup();
@@ -67,10 +61,7 @@ public static class EventInvoke
 
             void FinishCanceled(bool emitAbort)
             {
-                if (Interlocked.Exchange(ref finished, 1) != 0)
-                {
-                    return;
-                }
+                if (Interlocked.Exchange(ref finished, 1) != 0) return;
 
                 if (emitAbort)
                 {
@@ -88,10 +79,7 @@ public static class EventInvoke
 
             bool TryArmClientCancellation()
             {
-                if (!cancellationToken.CanBeCanceled)
-                {
-                    return true;
-                }
+                if (!cancellationToken.CanBeCanceled) return true;
 
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -115,20 +103,14 @@ public static class EventInvoke
 
             disposables.Add(context.On(receiveEvent, envelope =>
             {
-                if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId))
-                {
-                    return;
-                }
+                if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId)) return;
 
                 CompleteSuccessfully(envelope.Body.Content);
             }));
 
             disposables.Add(context.On(receiveErrorEvent, envelope =>
             {
-                if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId))
-                {
-                    return;
-                }
+                if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, invokeId)) return;
 
                 CompleteFaulted(envelope.Body.Error);
             }));
@@ -241,7 +223,7 @@ public static class EventInvoke
                     context.Emit(receiveEvent, new ReceivePayload<TResponse>(invokeId, response));
                 }
             }
-            catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested) { return; }
             catch (Exception error)
             {
                 if (!cancellationSource.IsCancellationRequested)
@@ -307,10 +289,7 @@ public static class EventInvoke
         {
             lock (sync)
             {
-                if (inflight.TryGetValue(invokeId, out var existing))
-                {
-                    return existing;
-                }
+                if (inflight.TryGetValue(invokeId, out var existing)) return existing;
 
                 var created = new RequestStreamInvocationState<TRequest>(invokeId);
                 inflight[invokeId] = created;
@@ -327,18 +306,16 @@ public static class EventInvoke
                     state.Requests.ReadAll(respectConsumerCancellation: false),
                     state.CancellationSource.Token).ConfigureAwait(false);
 
-                if (!state.CancellationSource.IsCancellationRequested)
-                {
-                    context.Emit(receiveEvent, new ReceivePayload<TResponse>(state.InvokeId, response));
-                }
+                if (state.CancellationSource.IsCancellationRequested) return;
+
+                context.Emit(receiveEvent, new ReceivePayload<TResponse>(state.InvokeId, response));
             }
-            catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested) { return; }
             catch (Exception error)
             {
-                if (!state.CancellationSource.IsCancellationRequested)
-                {
-                    context.Emit(receiveErrorEvent, new ReceiveErrorPayload(state.InvokeId, error));
-                }
+                if (state.CancellationSource.IsCancellationRequested) return;
+
+                context.Emit(receiveErrorEvent, new ReceiveErrorPayload(state.InvokeId, error));
             }
             finally
             {
@@ -402,10 +379,7 @@ public static class EventInvoke
         lock (registry.SyncRoot)
         {
             if (!registry.Registrations.TryGetValue(eventId, out var handlers)
-                || !handlers.TryGetValue(handler, out registration))
-            {
-                return;
-            }
+                || !handlers.TryGetValue(handler, out registration)) return;
 
             handlers.Remove(handler);
             if (handlers.Count == 0)
@@ -451,10 +425,7 @@ public static class EventInvoke
 
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _disposed, 1) != 0)
-            {
-                return;
-            }
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
             foreach (var subscription in subscriptions)
             {
