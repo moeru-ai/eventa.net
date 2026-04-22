@@ -134,6 +134,69 @@ public class InvokeTests
     }
 
     [Fact]
+    public async Task DefineInvoke_FatalEventBeforeEmit_DoesNotSendRequest()
+    {
+        var fatalError = new InvalidOperationException("fatal-before-send");
+        var fatalEvent = new EventDefinition<Exception>("fatal-before-send-event");
+        var definition = new InvokeEventDefinition<string, string>("fatal-before-send");
+        var sendEvent = new EventDefinition<SendPayload<string>>(definition.SendEventId);
+        var context = new FatalEventDuringSubscriptionContext(fatalEvent.Id, fatalError);
+        var sendCount = 0;
+
+        context.RegisterAbortEvent(fatalEvent);
+
+        using var _ = context.On(sendEvent, _ => sendCount++);
+
+        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await invoke("request", CancellationToken.None));
+
+        Assert.Same(fatalError, error);
+        Assert.Equal(0, sendCount);
+        Assert.Equal(1, context.FatalSubscriptionDisposeCount);
+    }
+
+    [Fact]
+    public async Task DefineInvokeHandler_DoesNotEmitResponseAfterAbortWinsTheRace()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("unary-abort-wins");
+        var invokeId = "invoke-unary-abort-wins";
+        var sendEvent = new EventDefinition<SendPayload<int>>(definition.SendEventId);
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var receiveEvent = new EventDefinition<ReceivePayload<int>>(definition.ReceiveEventId);
+        var handlerStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var responseEmitted = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = context.On(receiveEvent, envelope =>
+        {
+            if (envelope.Body.InvokeId == invokeId)
+            {
+                responseEmitted.TrySetResult(envelope.Body);
+            }
+        });
+        using var __ = EventInvoke.DefineInvokeHandler(
+            context,
+            definition,
+            async (int _, CancellationToken cancellationToken) =>
+            {
+                handlerStarted.TrySetResult(true);
+                await allowCompletion.Task.WaitAsync(TestContext.Current.CancellationToken);
+                return 42;
+            });
+
+        context.Emit(sendEvent, new SendPayload<int>(invokeId, 1));
+        await handlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        context.Emit(sendAbortEvent, new AbortPayload(invokeId, "stop"));
+        allowCompletion.TrySetResult();
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+
+        Assert.False(responseEmitted.Task.IsCompleted);
+    }
+
+    [Fact]
     public async Task DefineInvoke_DoesNotEmitAbortAfterResponseWinsTheRace()
     {
         var definition = new InvokeEventDefinition<string, string>("cancel-after-response");
@@ -454,11 +517,132 @@ public class InvokeTests
         Assert.IsAssignableFrom<OperationCanceledException>(handlerError);
     }
 
+    [Fact]
+    public async Task DefineInvokeHandler_RequestStreamAbortDoesNotEmitResponseAfterAbortWinsTheRace()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("sum-abort-ignores-cancel");
+        var invokeId = "invoke-request-abort-wins";
+        var sendEvent = new EventDefinition<SendPayload<int>>(definition.SendEventId);
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var receiveEvent = new EventDefinition<ReceivePayload<int>>(definition.ReceiveEventId);
+        var handlerStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var responseEmitted = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = context.On(receiveEvent, envelope =>
+        {
+            if (envelope.Body.InvokeId == invokeId)
+            {
+                responseEmitted.TrySetResult(envelope.Body);
+            }
+        });
+        using var __ = EventInvoke.DefineInvokeHandler(
+            context,
+            definition,
+            async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
+            {
+                handlerStarted.TrySetResult(true);
+
+                try
+                {
+                    await foreach (var _ in request.WithCancellation(cancellationToken))
+                    {
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                }
+
+                await allowCompletion.Task.WaitAsync(TestContext.Current.CancellationToken);
+                return 42;
+            });
+
+        context.Emit(sendEvent, new SendPayload<int>(invokeId, 1));
+        await handlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        context.Emit(sendAbortEvent, new AbortPayload(invokeId, "stop"));
+        allowCompletion.TrySetResult();
+        await Task.Delay(200, TestContext.Current.CancellationToken);
+
+        Assert.False(responseEmitted.Task.IsCompleted);
+    }
+
     private sealed record CancelRequest(int Value);
 
     private sealed record UserRequest(string Name, int Age);
 
     private sealed record UserResponse(string Id);
+
+    private sealed class FatalEventDuringSubscriptionContext(string fatalEventId, Exception fatalError) : IEventContext
+    {
+        private readonly EventContext _inner = new();
+        private int _fatalSubscriptionDisposeCount;
+
+        public IDictionary<string, object> Extensions => _inner.Extensions;
+
+        public int FatalSubscriptionDisposeCount => Volatile.Read(ref _fatalSubscriptionDisposeCount);
+
+        public void Emit<TPayload>(EventDefinition<TPayload> eventDefinition, TPayload payload)
+        {
+            _inner.Emit(eventDefinition, payload);
+        }
+
+        public void Emit<TPayload, TOptions>(
+            EventDefinition<TPayload> eventDefinition,
+            TPayload payload,
+            TOptions options)
+            where TOptions : class
+        {
+            _inner.Emit(eventDefinition, payload, options);
+        }
+
+        public IDisposable On<TPayload>(
+            EventDefinition<TPayload> eventDefinition,
+            Action<EventEnvelope<TPayload>> handler)
+        {
+            var subscription = _inner.On(eventDefinition, handler);
+
+            if (StringComparer.Ordinal.Equals(eventDefinition.Id, fatalEventId))
+            {
+                handler(new EventEnvelope<TPayload>(eventDefinition.Id, (TPayload)(object)fatalError));
+
+                return new ActionDisposable(() =>
+                {
+                    Interlocked.Increment(ref _fatalSubscriptionDisposeCount);
+                    subscription.Dispose();
+                });
+            }
+
+            return subscription;
+        }
+
+        public IDisposable Once<TPayload>(
+            EventDefinition<TPayload> eventDefinition,
+            Action<EventEnvelope<TPayload>> handler)
+        {
+            return _inner.Once(eventDefinition, handler);
+        }
+
+        public void Off<TPayload>(
+            EventDefinition<TPayload> eventDefinition,
+            Action<EventEnvelope<TPayload>>? handler = null)
+        {
+            _inner.Off(eventDefinition, handler);
+        }
+
+        public IDisposable On<TPayload>(
+            MatchExpression<TPayload> matchExpression,
+            Action<EventEnvelope<TPayload>> handler)
+        {
+            return _inner.On(matchExpression, handler);
+        }
+
+        public void Dispose()
+        {
+            _inner.Dispose();
+        }
+    }
 
     private sealed class BlockingDisposeEventContext(string blockedEventId) : IEventContext
     {

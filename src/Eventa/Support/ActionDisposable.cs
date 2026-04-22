@@ -7,13 +7,13 @@ namespace Eventa;
 /// <param name="dispose">The callback to invoke the first time <see cref="Dispose"/> is called.</param>
 internal sealed class ActionDisposable(Action dispose) : IDisposable
 {
-    private Action? _dispose = dispose;
+    private readonly RunOnceAction _dispose = new(dispose);
 
     /// <summary>
     /// Invokes the stored cleanup callback once and prevents subsequent calls from running it again.
     /// </summary>
     public void Dispose()
     {
-        Interlocked.Exchange(ref _dispose, null)?.Invoke();
+        _dispose.Invoke();
     }
 }

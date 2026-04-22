@@ -516,6 +516,32 @@ private static async IAsyncEnumerable<TRes> StreamFromCallback<TReq, TRes>(
 }
 ```
 
+### 3.9 当前仓库实现状态（2026-04）
+
+上面的 C# 片段主要用于说明映射思路；当前仓库中的原型已经收敛到更具体的实现边界，和早期草图有几个明确差异：
+
+- `EventInvoke` 与 `EventStream` 仍然是两个显式状态机；本轮重构只抽取共享机制，没有引入统一的 generic protocol engine。
+- 客户端 pending operation 已经分别实现为 `PendingInvokeOperation<TResponse, TRequest>` 与 `PendingStreamInvokeOperation<TResponse, TRequest>`，以便把订阅、完成、abort 和 cleanup 控制流收口到单一私有类型里。
+- 流式缓冲当前使用 `AsyncSignalQueue<T>`，而不是本报告早期草图中的 `Channel<T>`。原因是当前实现需要同时承载显式 `Complete` / `Fault` 和 `onDispose` 回调语义。
+- 取消判断故意保留在多个异步边界，而不是追求“只判断一次”：这既用于避免 late request / late response item emit，也用于避免已经取消后继续补发 `ReceiveStreamEnd` 或继续启动 handler。
+
+本轮提炼出的共享 internal support 类型如下：
+
+| 类型 | 当前职责 |
+|------|----------|
+| `InvokeEventBindings<TResponse, TRequest>` | 将 `InvokeEventDefinition` 一次性物化为 send / receive 相关的具体事件定义 |
+| `ClientCancellation` | 统一客户端取消注册逻辑，处理 `CancellationToken.Register(...)` 的竞态窗口，并保证取消回调至多执行一次 |
+| `HandlerRegistration` | 把协议订阅与 inflight cleanup 合并成单个 `IDisposable` |
+| `InvocationCancellationTracker` | 跟踪 unary handler 的 `invokeId -> CancellationTokenSource` 映射 |
+| `RequestStreamInvocationState<TRequest>` | 保存 request-stream handler 的请求队列、取消源与执行任务 |
+| `RequestStreamInvocationTracker<TRequest>` | 懒创建并先发布 request-stream state，再在锁外启动 handler，并负责统一 abort / dispose inflight 状态 |
+
+当前实现还保留了几个已经被测试锚定的约束，后续重构不应随意抹平：
+
+- `EventInvoke` 的 `EmitRequest()` 需要在发送前检查 `_finished`，因为 fatal-event 订阅可能在 request emit 之前就先完成该 invoke。
+- `EventStream` 的 request-stream sender 在客户端提前取消或提前 dispose 时，不应再枚举输入流，也不应补发晚到的 request item。
+- request-stream handler 的“pre-first-item abort” 在 C# 原型中仍然是受支持契约，即使当前 TypeScript 对 `send-stream-end` 的 unknown invokeId 处理更保守。
+
 ---
 
 ## 4. 适配器抽象层

@@ -329,6 +329,77 @@ public class StreamTests
     }
 
     [Fact]
+    public async Task DisposingAsyncEnumerator_BeforeQueuedRequestSend_DoesNotEnumerateRequestStreamInput()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("cancel-request-stream-before-send");
+        var sendEvent = new EventDefinition<SendPayload<int>>(definition.SendEventId);
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var requestEnumerationCount = 0;
+        var sendCount = 0;
+        var abortCount = 0;
+        var workerCount = Math.Max(8, Environment.ProcessorCount * 2);
+        ThreadPool.GetMinThreads(out var originalMinWorkerThreads, out var originalMinCompletionPortThreads);
+        using var releaseWorkers = new ManualResetEventSlim(false);
+        using var workersStarted = new CountdownEvent(workerCount);
+        var blockers = Enumerable.Range(0, workerCount)
+            .Select(_ => Task.Run(() =>
+            {
+                workersStarted.Signal();
+                releaseWorkers.Wait(TestContext.Current.CancellationToken);
+            }))
+            .ToArray();
+
+        ThreadPool.SetMinThreads(
+            Math.Max(originalMinWorkerThreads, workerCount),
+            originalMinCompletionPortThreads);
+
+        async IAsyncEnumerable<int> Requests()
+        {
+            requestEnumerationCount++;
+            await Task.Yield();
+            yield return 1;
+        }
+
+        async IAsyncEnumerable<int> Handler(
+            IAsyncEnumerable<int> request,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await foreach (var value in request.WithCancellation(cancellationToken))
+            {
+                yield return value;
+            }
+        }
+
+        using var _ = context.On(sendEvent, _ => sendCount++);
+        using var __ = context.On(sendAbortEvent, _ => abortCount++);
+        using var ___ = EventStream.DefineStreamInvokeHandler(context, definition, Handler);
+
+        try
+        {
+            Assert.True(workersStarted.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+
+            var stream = EventStream.DefineStreamInvoke(context, definition, Requests(), CancellationToken.None);
+            await using var enumerator = stream.GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+            await enumerator.DisposeAsync();
+
+            releaseWorkers.Set();
+            await Task.WhenAll(blockers).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            await Task.Delay(200, TestContext.Current.CancellationToken);
+
+            Assert.Equal(0, requestEnumerationCount);
+            Assert.Equal(0, sendCount);
+            Assert.Equal(1, abortCount);
+        }
+        finally
+        {
+            releaseWorkers.Set();
+            ThreadPool.SetMinThreads(originalMinWorkerThreads, originalMinCompletionPortThreads);
+        }
+    }
+
+    [Fact]
     public async Task DisposingAsyncEnumerator_StopsRequestStreamSender_AndPreventsLateRequests()
     {
         var context = new EventContext();
@@ -683,10 +754,14 @@ public class StreamTests
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("abort-request-stream-before-first-item");
+        var receiveErrorEvent = new EventDefinition<ReceiveErrorPayload>(definition.ReceiveErrorId);
         var handlerNotified = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var received = new List<int>();
         var responses = new List<int>();
+        var handlerObservedCanceledToken = false;
+        var receiveErrorCount = 0;
         Exception? handlerError = null;
+        Exception? receiveError = null;
         Exception? readError = null;
 
         async IAsyncEnumerable<int> Requests([EnumeratorCancellation] CancellationToken cancellationToken = default)
@@ -717,6 +792,12 @@ public class StreamTests
 
                     value = enumerator.Current;
                 }
+                catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
+                {
+                    handlerObservedCanceledToken = true;
+                    handlerError = error;
+                    throw;
+                }
                 catch (Exception error)
                 {
                     handlerError = error;
@@ -728,6 +809,11 @@ public class StreamTests
             }
         }
 
+        using var errorSubscription = context.On(receiveErrorEvent, envelope =>
+        {
+            Interlocked.Increment(ref receiveErrorCount);
+            receiveError = envelope.Body.Error;
+        });
         using var _ = EventStream.DefineStreamInvokeHandler(context, definition, Handler);
         using var cancellationSource = new CancellationTokenSource();
         var stream = EventStream.DefineStreamInvoke(
@@ -757,7 +843,10 @@ public class StreamTests
 
         Assert.Empty(received);
         Assert.Empty(responses);
+        Assert.True(handlerObservedCanceledToken);
         Assert.NotNull(handlerError);
+        Assert.Null(receiveError);
+        Assert.Equal(0, Volatile.Read(ref receiveErrorCount));
         Assert.NotNull(readError);
         Assert.IsAssignableFrom<OperationCanceledException>(handlerError);
         Assert.IsAssignableFrom<OperationCanceledException>(readError);
@@ -817,11 +906,12 @@ public class StreamTests
         await producerWaiting.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         cancellationSource.Cancel();
+        await readTask.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
         allowLateRegister.TrySetResult();
 
         await lateRegisterCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await lateRegisterCallbackInvoked.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        await readTask.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         Assert.Null(lateRegisterError);
         Assert.NotNull(readError);
