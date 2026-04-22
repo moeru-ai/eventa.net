@@ -104,6 +104,9 @@ internal sealed class AsyncSignalEnumerator<T>(
     {
         try
         {
+            // WaitToReadAsync returns false only after successful completion
+            // with no more buffered items; a faulted channel completes by
+            // throwing the producer's original exception here instead.
             while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
                 if (!reader.TryRead(out var item)) { continue; }
