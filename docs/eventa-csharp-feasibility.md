@@ -89,8 +89,8 @@ Eventa 是一个**传输无关的类型安全事件系统**，在事件原语之
 
 适配器是一个函数 `(emit) => { cleanup, hooks: { onSent, onReceived } }`：
 
-- `onSent`：`ctx.emit()` 每次调用后触发，适配器在此将事件序列化并发送到传输层
-- `onReceived`：`ctx.on()`/`ctx.once()` 处理消息时触发（作为日志 hook）
+- `onSent`：`ctx.emit()` 每次调用后触发，收到的是 `{ ...event, body: payload }` 形式的 envelope，适配器在此将其序列化并发送到传输层
+- `onReceived`：`ctx.on()`/`ctx.once()` 处理消息时触发，收到的同样是 envelope；若由 match expression 命中，hook 的 `eventId` 可能是 match-expression id，此时原始事件 ID 仍保留在 `envelope.EventId`
 - 返回 `cleanup` 函数用于断开传输层连接
 
 已有适配器覆盖的传输层：EventTarget、EventEmitter、BroadcastChannel、WebSocket（客户端+H3服务端）、Electron（main+renderer）、WebWorker、Worker Threads。
@@ -353,14 +353,15 @@ public static class EventInvoke
 public interface IEventaAdapter : IDisposable
 {
     /// <summary>
-    /// ctx.emit() 调用后触发，负责将事件序列化并发送到传输层
+    /// ctx.emit() 调用后触发，负责将 EventEnvelope<TPayload> 序列化并发送到传输层
     /// </summary>
-    void OnSent(string eventId, object payload, object? options = null);
+    void OnSent(string eventId, object envelope, object? options = null);
 
     /// <summary>
     /// ctx.on()/ctx.once() 匹配到消息时触发（观测 hook）
+    /// eventId 可能是 match-expression id，原始事件 ID 保留在 envelope.EventId
     /// </summary>
-    void OnReceived(string eventId, object payload);
+    void OnReceived(string eventId, object envelope);
 }
 
 // 带适配器的 context 工厂
@@ -545,8 +546,8 @@ private static async IAsyncEnumerable<TRes> StreamFromCallback<TReq, TRes>(
 ```csharp
 public interface IEventaAdapter : IDisposable
 {
-    void OnSent(string eventId, object payload, object? options = null);
-    void OnReceived(string eventId, object payload);
+    void OnSent(string eventId, object envelope, object? options = null);
+    void OnReceived(string eventId, object envelope);
 }
 
 // WebSocket 适配器示例
@@ -554,16 +555,16 @@ public class WebSocketAdapter : IEventaAdapter
 {
     private readonly WebSocket _ws;
 
-    public void OnSent(string eventId, object payload, object? options = null)
+    public void OnSent(string eventId, object envelope, object? options = null)
     {
-        var json = JsonSerializer.Serialize(new { eventId, payload });
+        var json = JsonSerializer.Serialize(new { eventId, envelope });
         var bytes = Encoding.UTF8.GetBytes(json);
         _ws.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
     }
 
-    public void OnReceived(string eventId, object payload)
+    public void OnReceived(string eventId, object envelope)
     {
-        // 观测 hook，可用于日志/指标
+        // 观测 hook，可用于日志/指标；若 eventId 是 match-expression id，可从 envelope.EventId 取原始事件 ID
     }
 
     // 构造函数中启动接收循环，收到消息后调用 emit

@@ -2,9 +2,7 @@ namespace Eventa;
 
 public sealed record InvokeEventDefinition<TResponse, TRequest>(string Tag)
 {
-    public InvokeEventDefinition() : this(IdGenerator.New())
-    {
-    }
+    public InvokeEventDefinition() : this(IdGenerator.New()) { }
 
     public string SendEventId => $"{Tag}-send";
 
