@@ -19,7 +19,7 @@ public class EventContextTests
     }
 
     [Fact]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "<Pending>")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "Keep the handler in a variable so the same handler value is subscribed twice.")]
     public void On_DeduplicatesTheSameHandlerInstance()
     {
         var context = new EventContext();
@@ -89,7 +89,7 @@ public class EventContextTests
     }
 
     [Fact]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "<Pending>")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "Keep handlers in variables so Off can remove one specific handler value.")]
     public void Off_WithHandler_RemovesOnlyTheRequestedListener()
     {
         var context = new EventContext();
@@ -115,7 +115,7 @@ public class EventContextTests
     }
 
     [Fact]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "<Pending>")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "Keep handlers in variables so one subscription stays tied to one handler value.")]
     public void ReturnedSubscription_RemovesOnlyTheRequestedListener()
     {
         var context = new EventContext();

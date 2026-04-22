@@ -1,59 +1,55 @@
-using System.Runtime.ExceptionServices;
 using System.Threading.Channels;
 
 namespace Eventa;
 
 /// <summary>
-/// Bridges push-style producers to <see cref="IAsyncEnumerable{T}" /> while preserving
-/// a single terminal transition.
+/// Bridges push-style producers to <see cref="IAsyncEnumerable{T}" /> via
+/// <see cref="Channel{T}" />.
+/// Normal completion and faults are represented by the channel's terminal
+/// state instead of in-band sentinel values, so once completion starts, later
+/// writes are rejected by the writer itself.
 /// </summary>
 internal sealed class AsyncSignalQueue<T>
 {
-    private readonly Channel<AsyncSignal<T>> _channel = Channel.CreateUnbounded<AsyncSignal<T>>();
-    private int _isTerminal;
+    private readonly Channel<T> _channel = Channel.CreateUnbounded<T>();
 
     /// <summary>
-    /// Writes a value if the queue has not already completed or faulted.
+    /// Attempts to enqueue a value.
+    /// Returns <see langword="false" /> once the underlying channel has already
+    /// completed or faulted.
     /// </summary>
     public bool TryWrite(T value)
     {
-        return Volatile.Read(ref _isTerminal) == 0
-            && _channel.Writer.TryWrite(AsyncSignal<T>.FromValue(value));
+        return _channel.Writer.TryWrite(value);
     }
 
     /// <summary>
-    /// Transitions the queue to its completed state. Subsequent calls are ignored.
+    /// Completes the queue normally.
+    /// Buffered values remain readable, and subsequent terminal transitions are
+    /// ignored by <see cref="ChannelWriter{T}.TryComplete(System.Exception?)" />.
     /// </summary>
     public void Complete()
     {
-        if (Interlocked.Exchange(ref _isTerminal, 1) != 0)
-        {
-            return;
-        }
-
-        _channel.Writer.TryWrite(AsyncSignal<T>.Completed());
         _channel.Writer.TryComplete();
     }
 
     /// <summary>
-    /// Transitions the queue to its faulted state. Subsequent calls are ignored.
+    /// Completes the queue with a producer error.
+    /// Buffered values remain readable, after which consumers observe the
+    /// original exception from channel completion.
     /// </summary>
     public void Fault(Exception error)
     {
         ArgumentNullException.ThrowIfNull(error);
 
-        if (Interlocked.Exchange(ref _isTerminal, 1) != 0)
-        {
-            return;
-        }
-
-        _channel.Writer.TryWrite(AsyncSignal<T>.FromError(error));
-        _channel.Writer.TryComplete();
+        _channel.Writer.TryComplete(error);
     }
 
     /// <summary>
-    /// Exposes the queue as an async sequence. When enumeration stops early,
-    /// <paramref name="onDispose" /> can be used to notify upstream owners.
+    /// Exposes the channel as an async sequence.
+    /// When enumeration stops early, <paramref name="onDispose" /> notifies the
+    /// owner; once normal completion or a producer fault is observed, disposal
+    /// becomes a no-op.
     /// </summary>
     public IAsyncEnumerable<T> ReadAll(
         bool respectConsumerCancellation = true,
@@ -64,90 +60,89 @@ internal sealed class AsyncSignalQueue<T>
 }
 
 /// <summary>
-/// The three signal kinds carried through the internal channel.
+/// Adapts a <see cref="ChannelReader{T}" /> to <see cref="IAsyncEnumerable{T}" />
+/// while carrying queue-specific disposal semantics.
 /// </summary>
-internal enum AsyncSignalKind
-{
-    Value,
-    Error,
-    Completed,
-}
-
-/// <summary>
-/// Values and terminal signals share the same channel so the consumer sees
-/// the exact order in which data, completion, and faults were produced.
-/// </summary>
-internal readonly record struct AsyncSignal<T>(T? Value, Exception? Error, AsyncSignalKind Kind)
-{
-    public static AsyncSignal<T> FromValue(T value)
-    {
-        return new AsyncSignal<T>(value, null, AsyncSignalKind.Value);
-    }
-
-    public static AsyncSignal<T> FromError(Exception error)
-    {
-        return new AsyncSignal<T>(default, error, AsyncSignalKind.Error);
-    }
-
-    public static AsyncSignal<T> Completed()
-    {
-        return new AsyncSignal<T>(default, null, AsyncSignalKind.Completed);
-    }
-}
-
 internal sealed class AsyncSignalEnumerable<T>(
-    ChannelReader<AsyncSignal<T>> reader,
+    ChannelReader<T> reader,
     bool respectConsumerCancellation,
     Func<ValueTask>? onDispose) : IAsyncEnumerable<T>
 {
+    /// <summary>
+    /// Creates an enumerator that can either honor the caller's cancellation
+    /// token or ignore it and keep draining the channel.
+    /// </summary>
     public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
     {
-        return new AsyncSignalEnumerator<T>(
-            reader,
-            respectConsumerCancellation ? cancellationToken : CancellationToken.None,
-            onDispose);
+        var token = respectConsumerCancellation ? cancellationToken : CancellationToken.None;
+        return new AsyncSignalEnumerator<T>(reader, onDispose, token);
     }
 }
 
+/// <summary>
+/// Reads raw channel items and turns channel termination into async-enumerator
+/// semantics:
+/// normal completion ends the sequence, faulted completion rethrows the
+/// producer's original exception, and consumer cancellation remains distinct.
+/// </summary>
 internal sealed class AsyncSignalEnumerator<T>(
-    ChannelReader<AsyncSignal<T>> reader,
-    CancellationToken cancellationToken,
-    Func<ValueTask>? onDispose) : IAsyncEnumerator<T>
+    ChannelReader<T> reader,
+    Func<ValueTask>? onDispose,
+    CancellationToken cancellationToken) : IAsyncEnumerator<T>
 {
     private int _isDisposed;
     private bool _isTerminal;
 
     public T Current { get; private set; } = default!;
 
+    /// <summary>
+    /// Advances to the next buffered value, returns <see langword="false" />
+    /// when the channel completes normally, or rethrows the producer failure
+    /// once all buffered values have been drained.
+    /// </summary>
     public async ValueTask<bool> MoveNextAsync()
     {
-        while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+        try
         {
-            if (!reader.TryRead(out var signal))
+            while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                continue;
-            }
+                if (!reader.TryRead(out var item))
+                {
+                    continue;
+                }
 
-            switch (signal.Kind)
-            {
-                case AsyncSignalKind.Value:
-                    Current = signal.Value!;
-                    return true;
-                case AsyncSignalKind.Error:
-                    // Preserve the original stack when surfacing producer failures.
-                    _isTerminal = true;
-                    ExceptionDispatchInfo.Capture(signal.Error!).Throw();
-                    break;
-                case AsyncSignalKind.Completed:
-                    _isTerminal = true;
-                    return false;
+                Current = item;
+                return true;
             }
+        }
+        catch (Exception) when (ShouldSurfaceTerminalException())
+        {
+            throw;
         }
 
         _isTerminal = true;
         return false;
     }
 
+    /// <summary>
+    /// Marks producer-driven completion as terminal while letting consumer
+    /// cancellation flow through without changing the queue's terminal state.
+    /// </summary>
+    private bool ShouldSurfaceTerminalException()
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        _isTerminal = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Notifies the owner only when enumeration stops before the producer has
+    /// reached normal or faulted completion.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _isDisposed, 1) != 0)

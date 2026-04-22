@@ -3,6 +3,45 @@ namespace Eventa.Tests;
 public class AsyncSignalQueueTests
 {
     [Fact]
+    public async Task Complete_ConcurrentWithWriters_DoesNotDropAcceptedValues()
+    {
+        for (var iteration = 0; iteration < 200; iteration++)
+        {
+            var queue = new AsyncSignalQueue<int>();
+            var successfulWrites = 0;
+            using var start = new ManualResetEventSlim(false);
+            var writers = Enumerable.Range(0, Environment.ProcessorCount * 2)
+                .Select(writerId => Task.Run(() =>
+                {
+                    start.Wait();
+
+                    while (queue.TryWrite(writerId))
+                    {
+                        Interlocked.Increment(ref successfulWrites);
+                        Thread.Yield();
+                    }
+                }))
+                .ToArray();
+
+            start.Set();
+            Assert.True(SpinWait.SpinUntil(
+                () => Volatile.Read(ref successfulWrites) > 0,
+                TimeSpan.FromSeconds(1)));
+
+            queue.Complete();
+            await Task.WhenAll(writers);
+
+            var observed = 0;
+            await foreach (var _ in queue.ReadAll())
+            {
+                observed++;
+            }
+
+            Assert.Equal(successfulWrites, observed);
+        }
+    }
+
+    [Fact]
     public async Task DisposeAsync_BeforeTerminal_InvokesOnDisposeOnce()
     {
         var disposeCalls = 0;

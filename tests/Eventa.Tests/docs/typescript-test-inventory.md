@@ -92,7 +92,7 @@ Status: `extra`
 
 Status: `extra`
 
-- Internal queue contract coverage for completion, fault, early-dispose cleanup, and ignored consumer cancellation.
+- Internal queue contract coverage for completion, fault, early-dispose cleanup, ignored consumer cancellation, and concurrent completion that must not drop already-accepted writes.
 
 ## Current intent
 
