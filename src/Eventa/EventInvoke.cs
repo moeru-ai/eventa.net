@@ -6,7 +6,7 @@ public static class EventInvoke
 {
     private static readonly ConditionalWeakTable<IEventContext, InvokeHandlerRegistry> HandlerRegistries = [];
 
-    // Client invoke API
+    #region Client Invoke API
 
     public static Func<TRequest, CancellationToken, Task<TResponse>> DefineInvoke<TResponse, TRequest>(
         IEventContext context,
@@ -33,7 +33,9 @@ public static class EventInvoke
                 cancellationToken).Run();
     }
 
-    // Handler registration API
+    #endregion
+
+    #region Handler Registration API
 
     public static IDisposable DefineInvokeHandler<TResponse, TRequest>(
         IEventContext context,
@@ -69,7 +71,9 @@ public static class EventInvoke
                 () => CreateRequestStreamHandlerRegistration(context, eventDefinition, handler));
     }
 
-    // Handler registration
+    #endregion
+
+    #region Handler Registration
 
     private static HandlerRegistration CreateUnaryHandlerRegistration<TResponse, TRequest>(
         IEventContext context,
@@ -185,7 +189,9 @@ public static class EventInvoke
         return new HandlerRegistration(subscriptions, inflight.AbortAllAndDispose);
     }
 
-    // Client operation
+    #endregion
+
+    #region Client Operation
 
     private sealed class PendingInvokeOperation<TResponse, TRequest>(
         IEventContext context,
@@ -310,7 +316,9 @@ public static class EventInvoke
         }
     }
 
-    // Support
+    #endregion
+
+    #region Support
 
     private static bool TryGetInvokeInternalConfig(IEventContext context, out InvokeInternalConfig config)
     {
@@ -378,4 +386,6 @@ public static class EventInvoke
             registration.Dispose();
         }
     }
+
+    #endregion
 }
