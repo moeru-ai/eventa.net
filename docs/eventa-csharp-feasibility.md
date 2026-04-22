@@ -530,11 +530,11 @@ private static async IAsyncEnumerable<TRes> StreamFromCallback<TReq, TRes>(
 | 类型 | 当前职责 |
 |------|----------|
 | `InvokeEventBindings<TResponse, TRequest>` | 将 `InvokeEventDefinition` 一次性物化为 send / receive 相关的具体事件定义 |
-| `ClientCancellation` | 统一客户端取消注册逻辑，并处理 `CancellationToken.Register(...)` 的竞态窗口 |
+| `ClientCancellation` | 统一客户端取消注册逻辑，处理 `CancellationToken.Register(...)` 的竞态窗口，并保证取消回调至多执行一次 |
 | `HandlerRegistration` | 把协议订阅与 inflight cleanup 合并成单个 `IDisposable` |
 | `InvocationCancellationTracker` | 跟踪 unary handler 的 `invokeId -> CancellationTokenSource` 映射 |
 | `RequestStreamInvocationState<TRequest>` | 保存 request-stream handler 的请求队列、取消源与执行任务 |
-| `RequestStreamInvocationTracker<TRequest>` | 懒创建 request-stream state，并负责统一 abort / dispose inflight 状态 |
+| `RequestStreamInvocationTracker<TRequest>` | 懒创建并先发布 request-stream state，再在锁外启动 handler，并负责统一 abort / dispose inflight 状态 |
 
 当前实现还保留了几个已经被测试锚定的约束，后续重构不应随意抹平：
 

@@ -12,8 +12,10 @@ internal sealed class RequestStreamInvocationTracker<TRequest>
         new(StringComparer.Ordinal);
 
     /// <summary>
-    /// Gets the existing state for <paramref name="invokeId" /> or creates it and starts handler
-    /// execution exactly once.
+    /// Gets the existing state for <paramref name="invokeId" /> or creates it, publishes it
+    /// under the tracker lock, and starts handler execution exactly once after the lock is released.
+    /// If <paramref name="startExecution" /> throws synchronously for a newly-created state, the
+    /// tracker removes and disposes that state before rethrown.
     /// </summary>
     /// <param name="invokeId">The invoke id whose request-stream state should be resolved.</param>
     /// <param name="startExecution">The callback that starts handler execution for a newly created state.</param>
@@ -23,14 +25,35 @@ internal sealed class RequestStreamInvocationTracker<TRequest>
     {
         ArgumentNullException.ThrowIfNull(startExecution);
 
+        RequestStreamInvocationState<TRequest>? created;
+
         lock (_sync)
         {
             if (_inflight.TryGetValue(invokeId, out var existing)) return existing;
 
-            var created = new RequestStreamInvocationState<TRequest>(invokeId);
+            created = new RequestStreamInvocationState<TRequest>(invokeId);
             _inflight[invokeId] = created;
+        }
+
+        try
+        {
+            // State publication must stay under the tracker lock, but handler startup must not.
             created.Execution = startExecution(created);
             return created;
+        }
+        catch
+        {
+            lock (_sync)
+            {
+                if (_inflight.TryGetValue(invokeId, out var existing)
+                    && ReferenceEquals(existing, created))
+                {
+                    _inflight.Remove(invokeId);
+                }
+            }
+
+            created.Dispose();
+            throw;
         }
     }
 

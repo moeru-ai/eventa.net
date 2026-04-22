@@ -209,7 +209,7 @@ public static class EventInvoke
                 return _completion.Task;
             }
 
-            if (!ClientCancellation.TryArm(cancellationToken, _subscriptions, AbortFromClient))
+            if (!ClientCancellation.TryArm(_subscriptions, AbortFromClient, cancellationToken))
             {
                 return _completion.Task;
             }

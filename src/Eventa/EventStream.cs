@@ -302,7 +302,7 @@ public static class EventStream
         {
             SubscribeToResponses();
 
-            if (!ClientCancellation.TryArm(cancellationToken, _subscriptions, AbortFromClient))
+            if (!ClientCancellation.TryArm(_subscriptions, AbortFromClient, cancellationToken))
             {
                 return CreateResultStream(NoopOnDisposeAsync);
             }

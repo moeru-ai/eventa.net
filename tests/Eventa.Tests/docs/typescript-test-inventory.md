@@ -62,10 +62,11 @@ Current C# target: none
 ### `context-extension-invoke-internal.spec.ts`
 
 Status: `covered` + `adapted` + `extra`
-Current C# target: `InvokeExtensionsTests.cs`
+Current C# target: `InvokeExtensionsTests.cs`, `InvokeTests.cs`
 
 - Covered: pending invokes are rejected when the fatal event fires, including the case where the fatal event completes the invoke before the client request is emitted.
 - Adapted: the TS `{ error }` payload pattern maps to C# via `RegisterAbortEvent<TPayload>(..., mapError)`, which can preserve the exact exception instance from a typed fatal-event payload.
+- Extra C# contract: if the fatal event fires reentrantly while its subscription is still being attached, the pending invoke still disposes that fatal-event subscription exactly once.
 - Extra C# contract: `RegisterAbortEvent(EventDefinition<object>)` also preserves the exact exception instance when the fatal-event payload is itself an `Exception`.
 - Extra C# contract: if the mapper returns `null` or the object payload is not an `Exception`, pending invokes fault with the default `InvalidOperationException("Pending invoke aborted by fatal event.")`.
 
@@ -96,6 +97,18 @@ Status: `extra`
 Status: `extra`
 
 - Internal queue contract coverage for completion, fault, early-dispose cleanup, ignored consumer cancellation, and concurrent completion that must not drop already-accepted writes.
+
+### `RunOnceActionTests.cs`
+
+Status: `extra`
+
+- Internal helper coverage for at-most-once callback execution, used by disposal and client-cancellation paths that must not run the same cleanup twice.
+
+### `RequestStreamInvocationTrackerTests.cs`
+
+Status: `extra`
+
+- Internal tracker coverage for publishing request-stream state before handler startup, starting execution outside the tracker lock, and rolling back broken inflight state when startup throws synchronously.
 
 ## Current intent
 
