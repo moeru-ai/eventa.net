@@ -28,12 +28,14 @@ internal sealed class RequestStreamInvocationState<TRequest>(string invokeId) : 
     public Task? Execution { get; set; }
 
     /// <summary>
-    /// Aborts the request stream by faulting the queued input and canceling the handler token.
+    /// Aborts the request stream by canceling the handler token and faulting the queued input.
     /// </summary>
     public void Abort()
     {
-        Requests.Fault(new OperationCanceledException(CancellationSource.Token));
+        // Handler-side cancellation filters inspect the token when the queue fault is observed,
+        // so publish cancellation before surfacing the fault to request consumers.
         CancellationSource.Cancel();
+        Requests.Fault(new OperationCanceledException(CancellationSource.Token));
     }
 
     /// <summary>

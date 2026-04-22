@@ -15,7 +15,7 @@ internal sealed class RequestStreamInvocationTracker<TRequest>
     /// Gets the existing state for <paramref name="invokeId" /> or creates it, publishes it
     /// under the tracker lock, and starts handler execution exactly once after the lock is released.
     /// If <paramref name="startExecution" /> throws synchronously for a newly-created state, the
-    /// tracker removes and disposes that state before rethrown.
+    /// tracker removes and disposes that state before rethrowing.
     /// </summary>
     /// <param name="invokeId">The invoke id whose request-stream state should be resolved.</param>
     /// <param name="startExecution">The callback that starts handler execution for a newly created state.</param>
@@ -25,7 +25,7 @@ internal sealed class RequestStreamInvocationTracker<TRequest>
     {
         ArgumentNullException.ThrowIfNull(startExecution);
 
-        RequestStreamInvocationState<TRequest>? created;
+        RequestStreamInvocationState<TRequest> created;
 
         lock (_sync)
         {
