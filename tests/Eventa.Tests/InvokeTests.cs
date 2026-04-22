@@ -153,6 +153,7 @@ public class InvokeTests
 
         Assert.Same(fatalError, error);
         Assert.Equal(0, sendCount);
+        Assert.Equal(1, context.FatalSubscriptionDisposeCount);
     }
 
     [Fact]
@@ -576,8 +577,11 @@ public class InvokeTests
     private sealed class FatalEventDuringSubscriptionContext(string fatalEventId, Exception fatalError) : IEventContext
     {
         private readonly EventContext _inner = new();
+        private int _fatalSubscriptionDisposeCount;
 
         public IDictionary<string, object> Extensions => _inner.Extensions;
+
+        public int FatalSubscriptionDisposeCount => Volatile.Read(ref _fatalSubscriptionDisposeCount);
 
         public void Emit<TPayload>(EventDefinition<TPayload> eventDefinition, TPayload payload)
         {
@@ -602,6 +606,12 @@ public class InvokeTests
             if (StringComparer.Ordinal.Equals(eventDefinition.Id, fatalEventId))
             {
                 handler(new EventEnvelope<TPayload>(eventDefinition.Id, (TPayload)(object)fatalError));
+
+                return new ActionDisposable(() =>
+                {
+                    Interlocked.Increment(ref _fatalSubscriptionDisposeCount);
+                    subscription.Dispose();
+                });
             }
 
             return subscription;

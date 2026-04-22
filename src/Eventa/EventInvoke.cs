@@ -204,6 +204,11 @@ public static class EventInvoke
             SubscribeToResponses();
             SubscribeToFatalEvents();
 
+            if (Volatile.Read(ref _finished) != 0)
+            {
+                return _completion.Task;
+            }
+
             if (!ClientCancellation.TryArm(cancellationToken, _subscriptions, AbortFromClient))
             {
                 return _completion.Task;
@@ -236,7 +241,12 @@ public static class EventInvoke
 
             foreach (var fatalEvent in internalConfig.AbortOnEvents)
             {
-                _subscriptions.Add(fatalEvent.Subscribe(context, error =>
+                if (Volatile.Read(ref _finished) != 0) return;
+
+                var subscription = new DeferredDisposable();
+                _subscriptions.Add(subscription);
+
+                subscription.Attach(fatalEvent.Subscribe(context, error =>
                 {
                     CompleteFaulted(error ?? CreateAbortException());
                 }));
