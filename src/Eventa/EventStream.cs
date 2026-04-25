@@ -37,7 +37,7 @@ public static class EventStream
         ArgumentNullException.ThrowIfNull(eventDefinition);
         ArgumentNullException.ThrowIfNull(handler);
 
-        return StreamHandlerRegistrationFactory.CreateUnary(context, eventDefinition, handler);
+        return InvokeStreamHandlerRegistrationFactory.CreateUnary(context, eventDefinition, handler);
     }
 
     public static IDisposable RegisterStreamHandler<TResponse, TRequest>(
@@ -49,7 +49,7 @@ public static class EventStream
         ArgumentNullException.ThrowIfNull(eventDefinition);
         ArgumentNullException.ThrowIfNull(handler);
 
-        return StreamHandlerRegistrationFactory.CreateRequestStream(context, eventDefinition, handler);
+        return InvokeStreamHandlerRegistrationFactory.CreateRequestStream(context, eventDefinition, handler);
     }
 
     #endregion

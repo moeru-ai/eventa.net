@@ -111,6 +111,12 @@ Status: `extra`
 
 - Internal helper coverage for at-most-once callback execution, used by disposal and client-cancellation paths that must not run the same cleanup twice.
 
+### `DeferredDisposableTests.cs`
+
+Status: `extra`
+
+- Internal helper coverage for placeholder disposables that may be disposed before the real subscription or cancellation registration is attached; also asserts duplicate attachment is rejected without leaking the original cleanup handle.
+
 ### `RequestStreamInvocationTrackerTests.cs`
 
 Status: `extra`

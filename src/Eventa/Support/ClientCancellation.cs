@@ -42,7 +42,7 @@ internal static class ClientCancellation
             return false;
         }
 
-        var cancellationRegistration = new DeferredCancellationRegistration();
+        var cancellationRegistration = new DeferredDisposable();
         cleanup.Add(cancellationRegistration);
         cancellationRegistration.Attach(cancellationToken.Register(guardedCancellation.Invoke));
 

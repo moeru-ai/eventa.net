@@ -583,7 +583,7 @@ The shared internal support types extracted in this round are:
 | `InvocationCancellationTracker` | Tracks the unary handler `invokeId -> CancellationTokenSource` map |
 | `RequestStreamInvocationState<TRequest>` | Holds the request queue, cancellation source, and execution task for request-stream handlers |
 | `RequestStreamInvocationTracker<TRequest>` | Lazily creates and publishes request-stream state, starts the handler outside the lock, and owns abort / dispose for inflight state |
-| `InvokeHandlerRegistrationFactory` / `StreamHandlerRegistrationFactory` | Keep handler-side protocol subscriptions out of the public API facade classes |
+| `InvokeHandlerRegistrationFactory` / `InvokeStreamHandlerRegistrationFactory` | Keep handler-side protocol subscriptions out of the public API facade classes |
 
 The current implementation still preserves several constraints that are already
 anchored by tests and should not be casually erased in future refactors:
@@ -839,9 +839,8 @@ public class StreamTests
 Eventa.sln
 ├── src/
 │   ├── Eventa.Core/                     # Core library
-│   │   ├── EventDefinition.cs           # record EventDefinition<T>
+│   │   ├── EventDefinition.cs           # EventDefinition<T> and InvokeEventDefinition<TResponse, TRequest>
 │   │   ├── EventContext.cs              # IEventContext implementation
-│   │   ├── InvokeEventDefinition.cs     # the 7 related invoke events
 │   │   ├── EventInvoke.cs               # CreateInvokeClient / RegisterInvokeHandler
 │   │   ├── EventStream.cs               # CreateInvokeStreamClient / RegisterStreamHandler
 │   │   ├── MatchExpression.cs           # matchBy / and / or
@@ -895,7 +894,7 @@ Eventa.sln
 |------|------|------|
 | **Thread safety** | TS is single-threaded; C# must handle concurrent access | Use `ConcurrentDictionary` plus `lock`/`ReaderWriterLockSlim` where needed |
 | **Memory leaks** | TS relies on GC and closures; C# event subscriptions are strong references | `Subscribe()` should return `IDisposable`; encourage `using` |
-| **Exception propagation** | TS catches everything uniformly; C# distinguishes `Exception` and `OperationCanceledException` | Wrap handler errors in `EventaInvokeException`; preserve `OperationCanceledException` for cancellation |
+| **Exception propagation** | TS catches everything uniformly; C# distinguishes `Exception` and `OperationCanceledException` | Emit handler failures through protocol error events; preserve `OperationCanceledException` for cancellation |
 | **Serialization** | TS uses JSON / Structured Clone; C# must choose explicitly | Default to `System.Text.Json`; let adapters plug in `IEventaSerializer` |
 | **Performance** | `Channel<T>` can outperform TS `ReadableStream` for high-throughput buffering | Use `BoundedChannelOptions` to control backpressure |
 
