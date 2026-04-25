@@ -321,44 +321,11 @@ public record EventEnvelope<TPayload>(string EventId, TPayload Body);
 public static class EventInvoke
 {
     /// <summary>
-    /// Executes a client-side unary invoke.
+    /// Creates a client-side unary invoke binding.
     /// </summary>
-    public static Task<TRes> InvokeAsync<TRes, TReq>(
+    public static InvokeClient<TRes, TReq> CreateInvokeClient<TRes, TReq>(
         this IEventContext ctx,
-        InvokeEventDefinition<TRes, TReq> eventDef,
-        TReq request,
-        CancellationToken ct = default)
-    {
-        var invokeId = IdGenerator.New();
-        var tcs = new TaskCompletionSource<TRes>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        // CancellationToken registration
-        using var ctr = ct.Register(() =>
-        {
-            ctx.Emit(/* sendAbort */, new AbortPayload(invokeId, ct.ToString()));
-            tcs.TrySetCanceled(ct);
-        });
-
-        // Listen to receiveEvent-{invokeId}
-        using var onReceive = ctx.Subscribe(receiveEvent, envelope =>
-        {
-            if (envelope.Body.InvokeId != invokeId) return;
-            tcs.TrySetResult(envelope.Body.Content);
-        });
-
-        // Listen to receiveEventError-{invokeId}
-        using var onError = ctx.Subscribe(receiveErrorEvent, envelope =>
-        {
-            if (envelope.Body.InvokeId != invokeId) return;
-            tcs.TrySetException(envelope.Body.Error);
-        });
-
-        // Send the request
-        ctx.Emit(sendEvent, new SendPayload<TReq>(invokeId, request));
-
-        return tcs.Task;
-    }
+        InvokeEventDefinition<TRes, TReq> eventDef);
 
     /// <summary>
     /// Registers a server-side invoke handler
@@ -372,6 +339,16 @@ public static class EventInvoke
         // and return the result through receiveEvent
         // Listen to sendAbort and cancel the matching CancellationTokenSource
         // Return IDisposable so the handler registration can be removed
+    }
+}
+
+public sealed class InvokeClient<TRes, TReq>
+{
+    public Task<TRes> InvokeAsync(TReq request, CancellationToken ct = default)
+    {
+        // Generate invokeId, subscribe to receive/error/fatal events,
+        // arm cancellation, emit send, and complete the pending task.
+        throw new NotImplementedException();
     }
 }
 ```
@@ -471,19 +448,11 @@ ctx.Emit(moveEvent, new MoveData(100, 200), new SignalROptions
 public static class EventStream
 {
     /// <summary>
-    /// Server-streaming response
+    /// Creates a client-side streaming invoke binding.
     /// </summary>
-    public static IAsyncEnumerable<TRes> InvokeStreamAsync<TRes, TReq>(
+    public static InvokeStreamClient<TRes, TReq> CreateInvokeStreamClient<TRes, TReq>(
         this IEventContext ctx,
-        InvokeEventDefinition<TRes, TReq> eventDef,
-        TReq request,
-        CancellationToken ct = default)
-    {
-        // Return IAsyncEnumerable<TRes>; internally bridge through Channel<TRes>
-        // receiveEvent -> channel.Writer.TryWrite()
-        // receiveEventStreamEnd -> channel.Writer.Complete()
-        // receiveEventError -> channel.Writer.Complete(exception)
-    }
+        InvokeEventDefinition<TRes, TReq> eventDef);
 
     /// <summary>
     /// Registers a streaming handler (using async yield)
@@ -496,6 +465,24 @@ public static class EventStream
         // Each yielded value -> emit receiveEvent
         // End of enumeration -> emit receiveEventStreamEnd
         // Exception -> emit receiveEventError
+    }
+}
+
+public sealed class InvokeStreamClient<TRes, TReq>
+{
+    public IAsyncEnumerable<TRes> InvokeAsync(TReq request, CancellationToken ct = default)
+    {
+        // Return IAsyncEnumerable<TRes>; internally bridge through AsyncSignalQueue<TRes>
+        // receiveEvent -> queue.TryWrite()
+        // receiveEventStreamEnd -> queue.Complete()
+        // receiveEventError -> queue.Fault(exception)
+        throw new NotImplementedException();
+    }
+
+    public IAsyncEnumerable<TRes> InvokeAsync(IAsyncEnumerable<TReq> request, CancellationToken ct = default)
+    {
+        // Send each request item and complete send-stream-end after input is exhausted.
+        throw new NotImplementedException();
     }
 }
 ```
@@ -516,7 +503,8 @@ public static class EventStream
 Func<IAsyncEnumerable<TReq>, CancellationToken, IAsyncEnumerable<TRes>> bidiHandler;
 
 // Usage
-await foreach (var response in ctx.InvokeStreamAsync(events, inputStream, ct))
+var client = ctx.CreateInvokeStreamClient(events);
+await foreach (var response in client.InvokeAsync(inputStream, ct))
 {
     Console.WriteLine(response);
 }
@@ -568,13 +556,14 @@ The C# snippets above explain the mapping direction. The prototype in the
 current repository has already converged on more concrete implementation
 boundaries and differs from the early sketch in several clear ways:
 
-- `EventInvoke` and `EventStream` remain two explicit state machines. This
-  refactor only extracted shared mechanisms; it did not introduce a single
-  generic protocol engine.
+- `InvokeClient` and `InvokeStreamClient` remain two explicit client-side state
+  machines. This refactor only extracted shared mechanisms; it did not introduce
+  a single generic protocol engine.
 - Client-side pending operations are implemented as
   `PendingInvokeOperation<TResponse, TRequest>` and
-  `PendingStreamInvokeOperation<TResponse, TRequest>` so that subscription,
-  completion, abort, and cleanup control flow all live inside one private type.
+  `PendingStreamInvokeOperation<TResponse, TRequest>` inside their bound client
+  types so subscription, completion, abort, and cleanup control flow all live
+  with the bound context and definition.
 - Streaming currently uses `AsyncSignalQueue<T>` instead of the earlier
   `Channel<T>` sketch from this report, because the current implementation needs
   explicit `Complete` / `Fault` semantics and `onDispose` callbacks at the same
@@ -594,13 +583,14 @@ The shared internal support types extracted in this round are:
 | `InvocationCancellationTracker` | Tracks the unary handler `invokeId -> CancellationTokenSource` map |
 | `RequestStreamInvocationState<TRequest>` | Holds the request queue, cancellation source, and execution task for request-stream handlers |
 | `RequestStreamInvocationTracker<TRequest>` | Lazily creates and publishes request-stream state, starts the handler outside the lock, and owns abort / dispose for inflight state |
+| `InvokeHandlerRegistrationFactory` / `StreamHandlerRegistrationFactory` | Keep handler-side protocol subscriptions out of the public API facade classes |
 
 The current implementation still preserves several constraints that are already
 anchored by tests and should not be casually erased in future refactors:
 
-- `EventInvoke.EmitRequest()` must check `_finished` before sending because a
+- `InvokeClient.EmitRequest()` must check `_finished` before sending because a
   fatal-event subscription may complete the invoke before the request emit
-- The request-stream sender in `EventStream` must stop enumerating input and
+- The request-stream sender in `InvokeStreamClient` must stop enumerating input and
   must not emit late request items after early client cancellation or early
   enumerator disposal
 - The request-stream handler contract still supports "pre-first-item abort" in
@@ -742,8 +732,9 @@ public class InvokeTests
         var events = new InvokeEventDefinition<UserResponse, UserRequest>();
 
         using var handler = ctx.RegisterInvokeHandler(events, (req, ct) => Task.FromResult(new UserResponse($"user-{req.Name}")));
+        var client = ctx.CreateInvokeClient(events);
 
-        var result = await ctx.InvokeAsync(events, new UserRequest("alice"), CancellationToken.None);
+        var result = await client.InvokeAsync(new UserRequest("alice"), CancellationToken.None);
 
         result.Id.Should().Be("user-alice");
     }
@@ -755,8 +746,9 @@ public class InvokeTests
         var events = new InvokeEventDefinition<string, string>();
 
         using var handler = ctx.RegisterInvokeHandler(events, (_, _) => throw new InvalidOperationException("handler failed"));
+        var client = ctx.CreateInvokeClient(events);
 
-        var act = () => ctx.InvokeAsync(events, "test", CancellationToken.None);
+        var act = () => client.InvokeAsync("test", CancellationToken.None);
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("handler failed");
     }
@@ -774,7 +766,8 @@ public class InvokeTests
                 return "ok";
             });
 
-        var task = ctx.InvokeAsync(events, 42, cts.Token);
+        var client = ctx.CreateInvokeClient(events);
+        var task = client.InvokeAsync(42, cts.Token);
 
         cts.Cancel();
 
@@ -789,11 +782,12 @@ public class InvokeTests
         var events = new InvokeEventDefinition<int, int>();
 
         using var handler = ctx.RegisterInvokeHandler(events, (val, _) => Task.FromResult(val * 2));
+        var client = ctx.CreateInvokeClient(events);
 
         var results = await Task.WhenAll(
-            ctx.InvokeAsync(events, 10, default),
-            ctx.InvokeAsync(events, 20, default),
-            ctx.InvokeAsync(events, 50, default));
+            client.InvokeAsync(10, default),
+            client.InvokeAsync(20, default),
+            client.InvokeAsync(50, default));
 
         results.Should().Equal(20, 40, 100);
     }
@@ -812,10 +806,10 @@ public class StreamTests
         var events = new InvokeEventDefinition<ProgressOrResult, JobRequest>();
 
         using var handler = ctx.RegisterStreamHandler(events, async (req, ct) => ServerStreamImpl(req, ct));
+        var client = ctx.CreateInvokeStreamClient(events);
 
         var results = new List<ProgressOrResult>();
-        await foreach (var item in ctx.InvokeStreamAsync(events, new JobRequest("alice"),
-            default))
+        await foreach (var item in client.InvokeAsync(new JobRequest("alice"), default))
         {
             results.Add(item);
         }
@@ -848,8 +842,8 @@ Eventa.sln
 │   │   ├── EventDefinition.cs           # record EventDefinition<T>
 │   │   ├── EventContext.cs              # IEventContext implementation
 │   │   ├── InvokeEventDefinition.cs     # the 7 related invoke events
-│   │   ├── EventInvoke.cs               # InvokeAsync / RegisterInvokeHandler
-│   │   ├── EventStream.cs               # InvokeStreamAsync / RegisterStreamHandler
+│   │   ├── EventInvoke.cs               # CreateInvokeClient / RegisterInvokeHandler
+│   │   ├── EventStream.cs               # CreateInvokeStreamClient / RegisterStreamHandler
 │   │   ├── MatchExpression.cs           # matchBy / and / or
 │   │   ├── IEventaAdapter.cs            # adapter interface
 │   │   └── IdGenerator.cs               # nanoid equivalent
@@ -922,9 +916,9 @@ Eventa.sln
 
 1. Define `EventDefinition<T>` / `InvokeEventDefinition<TRes, TReq>` as records
 2. Implement `EventContext` (in-memory loopback, Emit/Subscribe/SubscribeOnce/Unsubscribe)
-3. Implement `InvokeAsync` / `RegisterInvokeHandler` (including
+3. Implement `CreateInvokeClient` / `RegisterInvokeHandler` (including
    `CancellationToken` and streaming request input)
-4. Implement `InvokeStreamAsync` / `RegisterStreamHandler`
+4. Implement `CreateInvokeStreamClient` / `RegisterStreamHandler`
    (`IAsyncEnumerable`)
 5. Implement `MatchExpression`, `And()`, and `Or()`
 6. Port the full unit-test matrix from the TS specs

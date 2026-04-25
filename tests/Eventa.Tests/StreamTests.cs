@@ -5,7 +5,7 @@ namespace Eventa.Tests;
 public class StreamTests
 {
     [Fact]
-    public async Task InvokeStreamAsync_ReturnsServerStreamResults()
+    public async Task InvokeStreamClient_ReturnsServerStreamResults()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<ProfileResponse, UserRequest>("profile");
@@ -13,8 +13,9 @@ public class StreamTests
         using var _ = context.RegisterStreamHandler(definition,
             static (request, _) => ProfileStreamAsync(request));
 
+        var client = context.CreateInvokeStreamClient(definition);
         var results = await CollectAsync(
-            context.InvokeStreamAsync(definition,
+            client.InvokeAsync(
                 new UserRequest("alice", 25),
                 CancellationToken.None));
 
@@ -29,6 +30,37 @@ public class StreamTests
                 new ResultResponse(true),
             ],
             results);
+    }
+
+    [Fact]
+    public async Task InvokeStreamClient_SupportsSyncLazyContextFactory()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("lazy-stream");
+        var factoryCalls = 0;
+
+        using var _ = context.RegisterStreamHandler(definition,
+            static (request, _) => CountAsync(request));
+
+        var client = EventStream.CreateInvokeStreamClient(() =>
+        {
+            factoryCalls++;
+            return context;
+        }, definition);
+
+        var results = await CollectAsync(client.InvokeAsync(3, CancellationToken.None));
+
+        Assert.Equal(1, factoryCalls);
+        Assert.Equal([1, 2, 3], results);
+
+        static async IAsyncEnumerable<int> CountAsync(int request)
+        {
+            for (var value = 1; value <= request; value++)
+            {
+                await Task.Yield();
+                yield return value;
+            }
+        }
     }
 
     [Fact]
@@ -50,8 +82,9 @@ public class StreamTests
                 await emit(new ResultResponse(true));
             }));
 
+        var client = context.CreateInvokeStreamClient(definition);
         var results = await CollectAsync(
-            context.InvokeStreamAsync(definition,
+            client.InvokeAsync(
                 new UserRequest("alice", 25),
                 CancellationToken.None));
 
@@ -69,7 +102,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_IsolatesConcurrentStreams()
+    public async Task InvokeStreamClient_IsolatesConcurrentStreams()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<ConcurrentResponse, StreamRequest>("progress");
@@ -77,13 +110,14 @@ public class StreamTests
         using var _ = context.RegisterStreamHandler(definition,
             static (request, _) => ProgressAsync(request));
 
-        var aliceTask = CollectAsync(context.InvokeStreamAsync(definition,
+        var client = context.CreateInvokeStreamClient(definition);
+        var aliceTask = CollectAsync(client.InvokeAsync(
             new StreamRequest("alice", 3),
             CancellationToken.None));
-        var bobTask = CollectAsync(context.InvokeStreamAsync(definition,
+        var bobTask = CollectAsync(client.InvokeAsync(
             new StreamRequest("bob", 2),
             CancellationToken.None));
-        var cathyTask = CollectAsync(context.InvokeStreamAsync(definition,
+        var cathyTask = CollectAsync(client.InvokeAsync(
             new StreamRequest("cathy", 4),
             CancellationToken.None));
 
@@ -116,7 +150,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_SurfacesHandlerErrors()
+    public async Task InvokeStreamClient_SurfacesHandlerErrors()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<string, string>("failing-stream");
@@ -125,14 +159,15 @@ public class StreamTests
         using var _ = context.RegisterStreamHandler(definition,
             (string _, CancellationToken _) => ThrowAsync<string>(expected));
 
-        var stream = context.InvokeStreamAsync(definition, "hello", CancellationToken.None);
+        var client = context.CreateInvokeStreamClient(definition);
+        var stream = client.InvokeAsync("hello", CancellationToken.None);
         var actual = await Assert.ThrowsAsync<InvalidOperationException>(() => DrainAsync(stream));
 
         Assert.Same(expected, actual);
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_AbortsStreamAndNotifiesHandler()
+    public async Task InvokeStreamClient_AbortsStreamAndNotifiesHandler()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<string, string>("cancellable-stream");
@@ -149,8 +184,9 @@ public class StreamTests
 
         using var _ = context.RegisterStreamHandler(definition, Handler);
 
+        var client = context.CreateInvokeStreamClient(definition);
         using var cancellationSource = new CancellationTokenSource();
-        var stream = context.InvokeStreamAsync(definition, "hello", cancellationSource.Token);
+        var stream = client.InvokeAsync("hello", cancellationSource.Token);
         var draining = DrainAsync(stream);
 
         cancellationSource.Cancel();
@@ -160,7 +196,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_WithPreCanceledToken_EmitsAbortOnlyOnce_WithoutSendingRequest()
+    public async Task InvokeStreamClient_WithPreCanceledToken_EmitsAbortOnlyOnce_WithoutSendingRequest()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<string, string>("pre-canceled-stream");
@@ -174,7 +210,8 @@ public class StreamTests
         using var cancellationSource = new CancellationTokenSource();
         cancellationSource.Cancel();
 
-        var stream = context.InvokeStreamAsync(definition, "hello", cancellationSource.Token);
+        var client = context.CreateInvokeStreamClient(definition);
+        var stream = client.InvokeAsync("hello", cancellationSource.Token);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => DrainAsync(stream));
 
@@ -183,7 +220,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_WithPreCanceledToken_DoesNotEnumerateRequestStreamInput()
+    public async Task InvokeStreamClient_WithPreCanceledToken_DoesNotEnumerateRequestStreamInput()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("pre-canceled-request-stream");
@@ -205,7 +242,8 @@ public class StreamTests
         using var cancellationSource = new CancellationTokenSource();
         cancellationSource.Cancel();
 
-        var stream = context.InvokeStreamAsync(definition, Requests(), cancellationSource.Token);
+        var client = context.CreateInvokeStreamClient(definition);
+        var stream = client.InvokeAsync(Requests(), cancellationSource.Token);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => DrainAsync(stream));
 
@@ -233,7 +271,8 @@ public class StreamTests
 
         using var _ = context.RegisterStreamHandler(definition, Handler);
 
-        var stream = context.InvokeStreamAsync(definition, 7, CancellationToken.None);
+        var client = context.CreateInvokeStreamClient(definition);
+        var stream = client.InvokeAsync(7, CancellationToken.None);
         await using var enumerator = stream.GetAsyncEnumerator(TestContext.Current.CancellationToken);
 
         Assert.True(await enumerator.MoveNextAsync());
@@ -286,11 +325,12 @@ public class StreamTests
 
         using var _ = context.RegisterStreamHandler(definition, Handler);
 
+        var client = context.CreateInvokeStreamClient(definition);
         try
         {
             Assert.True(workersStarted.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
 
-            var stream = context.InvokeStreamAsync(definition, 7, CancellationToken.None);
+            var stream = client.InvokeAsync(7, CancellationToken.None);
             await using var enumerator = stream.GetAsyncEnumerator(TestContext.Current.CancellationToken);
 
             await enumerator.DisposeAsync();
@@ -357,11 +397,12 @@ public class StreamTests
         using var __ = context.Subscribe(sendAbortEvent, _ => abortCount++);
         using var ___ = context.RegisterStreamHandler(definition, Handler);
 
+        var client = context.CreateInvokeStreamClient(definition);
         try
         {
             Assert.True(workersStarted.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
 
-            var stream = context.InvokeStreamAsync(definition, Requests(), CancellationToken.None);
+            var stream = client.InvokeAsync(Requests(), CancellationToken.None);
             await using var enumerator = stream.GetAsyncEnumerator(TestContext.Current.CancellationToken);
 
             await enumerator.DisposeAsync();
@@ -436,7 +477,8 @@ public class StreamTests
 
         using var _ = context.RegisterStreamHandler(definition, Handler);
 
-        var stream = context.InvokeStreamAsync(definition,
+        var client = context.CreateInvokeStreamClient(definition);
+        var stream = client.InvokeAsync(
             Requests(TestContext.Current.CancellationToken),
             TestContext.Current.CancellationToken);
         await using var enumerator = stream.GetAsyncEnumerator(TestContext.Current.CancellationToken);
@@ -510,8 +552,9 @@ public class StreamTests
 
         using var _ = context.RegisterStreamHandler(definition, Handler);
 
+        var client = context.CreateInvokeStreamClient(definition);
         var results = await CollectAsync(
-            context.InvokeStreamAsync(definition,
+            client.InvokeAsync(
                 Requests(TestContext.Current.CancellationToken),
                 TestContext.Current.CancellationToken));
 
@@ -530,7 +573,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_SupportsRequestStreamInput()
+    public async Task InvokeStreamClient_SupportsRequestStreamInput()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("sum-stream");
@@ -538,8 +581,9 @@ public class StreamTests
         using var _ = context.RegisterStreamHandler(definition,
             static (request, cancellationToken) => SumAsync(request, cancellationToken));
 
+        var client = context.CreateInvokeStreamClient(definition);
         var results = await CollectAsync(
-            context.InvokeStreamAsync(definition,
+            client.InvokeAsync(
                 Numbers(1, 2, 3),
                 CancellationToken.None));
 
@@ -547,7 +591,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_SupportsEmptyRequestStreamInput()
+    public async Task InvokeStreamClient_SupportsEmptyRequestStreamInput()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("sum-stream-empty");
@@ -555,8 +599,9 @@ public class StreamTests
         using var _ = context.RegisterStreamHandler(definition,
             static (request, cancellationToken) => SumAsync(request, cancellationToken));
 
+        var client = context.CreateInvokeStreamClient(definition);
         var results = await CollectAsync(
-                context.InvokeStreamAsync(definition,
+                client.InvokeAsync(
                     Numbers(),
                     CancellationToken.None))
             .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
@@ -629,7 +674,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_AbortsRequestStreamAndNotifiesHandler()
+    public async Task InvokeStreamClient_AbortsRequestStreamAndNotifiesHandler()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("abort-request-stream");
@@ -674,7 +719,8 @@ public class StreamTests
 
         using var _ = context.RegisterStreamHandler(definition, Handler);
         using var cancellationSource = new CancellationTokenSource();
-        var stream = context.InvokeStreamAsync(definition,
+        var client = context.CreateInvokeStreamClient(definition);
+        var stream = client.InvokeAsync(
             PacedNumbers(writeIntervalMilliseconds, totalWrites),
             cancellationSource.Token);
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
@@ -716,7 +762,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_AbortsRequestStreamBeforeFirstItem_AndNotifiesHandler()
+    public async Task InvokeStreamClient_AbortsRequestStreamBeforeFirstItem_AndNotifiesHandler()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("abort-request-stream-before-first-item");
@@ -782,7 +828,8 @@ public class StreamTests
         });
         using var _ = context.RegisterStreamHandler(definition, Handler);
         using var cancellationSource = new CancellationTokenSource();
-        var stream = context.InvokeStreamAsync(definition,
+        var client = context.CreateInvokeStreamClient(definition);
+        var stream = client.InvokeAsync(
             Requests(TestContext.Current.CancellationToken),
             cancellationSource.Token);
         var readTask = Task.Run(async () =>
@@ -817,7 +864,7 @@ public class StreamTests
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_RequestProducerCanRegisterAfterClientCancellation()
+    public async Task InvokeStreamClient_RequestProducerCanRegisterAfterClientCancellation()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("late-register-after-client-cancellation");
@@ -850,7 +897,8 @@ public class StreamTests
         }
 
         using var cancellationSource = new CancellationTokenSource();
-        var stream = context.InvokeStreamAsync(definition,
+        var client = context.CreateInvokeStreamClient(definition);
+        var stream = client.InvokeAsync(
             Requests(TestContext.Current.CancellationToken),
             cancellationSource.Token);
         var readTask = Task.Run(async () =>
@@ -899,8 +947,9 @@ public class StreamTests
                 await emit(sum);
             }));
 
+        var client = context.CreateInvokeStreamClient(definition);
         var results = await CollectAsync(
-            context.InvokeStreamAsync(definition,
+            client.InvokeAsync(
                 Numbers(4, 5, 6),
                 CancellationToken.None));
 

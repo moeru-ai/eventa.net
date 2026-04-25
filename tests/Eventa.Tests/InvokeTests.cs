@@ -11,8 +11,8 @@ public class InvokeTests
         using var _ = context.RegisterInvokeHandler(definition,
             (request, _) => Task.FromResult(new UserResponse($"{request.Name}-{request.Age}")));
 
-        var invoke = CreateInvoker(context, definition);
-        var result = await invoke(new UserRequest("alice", 25), CancellationToken.None);
+        var client = context.CreateInvokeClient(definition);
+        var result = await client.InvokeAsync(new UserRequest("alice", 25), CancellationToken.None);
 
         Assert.Equal(new UserResponse("alice-25"), result);
     }
@@ -27,13 +27,13 @@ public class InvokeTests
         using var _ = context.RegisterInvokeHandler(definition,
             (request, _) => Task.FromResult(new UserResponse($"{request.Name}-{request.Age}")));
 
-        var invoke = CreateInvoker(() =>
+        var client = EventInvoke.CreateInvokeClient(() =>
         {
             factoryCalls++;
             return context;
         }, definition);
 
-        var result = await invoke(new UserRequest("alice", 25), CancellationToken.None);
+        var result = await client.InvokeAsync(new UserRequest("alice", 25), CancellationToken.None);
 
         Assert.Equal(1, factoryCalls);
         Assert.Equal(new UserResponse("alice-25"), result);
@@ -50,9 +50,9 @@ public class InvokeTests
                 new InvalidOperationException(
                     $"Error processing request for {request.Name} aged {request.Age}")));
 
-        var invoke = CreateInvoker(context, definition);
+        var client = context.CreateInvokeClient(definition);
         var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => invoke(new UserRequest("alice", 25), CancellationToken.None));
+            () => client.InvokeAsync(new UserRequest("alice", 25), CancellationToken.None));
 
         Assert.Equal("Error processing request for alice aged 25", actual.Message);
     }
@@ -67,9 +67,9 @@ public class InvokeTests
         using var _ = context.RegisterInvokeHandler(definition,
             (string _, CancellationToken _) => Task.FromException<string>(expected));
 
-        var invoke = CreateInvoker(context, definition);
+        var client = context.CreateInvokeClient(definition);
         var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => invoke("request", CancellationToken.None));
+            () => client.InvokeAsync("request", CancellationToken.None));
 
         Assert.Same(expected, actual);
     }
@@ -89,10 +89,10 @@ public class InvokeTests
                 return "completed";
             });
 
-        var invoke = CreateInvoker(context, definition);
+        var client = context.CreateInvokeClient(definition);
         using var cancellationSource = new CancellationTokenSource();
 
-        var pending = invoke(new CancelRequest(1), cancellationSource.Token);
+        var pending = client.InvokeAsync(new CancelRequest(1), cancellationSource.Token);
         cancellationSource.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
@@ -112,12 +112,12 @@ public class InvokeTests
         using var _ = context.Subscribe(sendEvent, _ => sendCount++);
         using var __ = context.Subscribe(sendAbortEvent, _ => abortCount++);
 
-        var invoke = CreateInvoker(context, definition);
+        var client = context.CreateInvokeClient(definition);
         using var cancellationSource = new CancellationTokenSource();
         cancellationSource.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            async () => await invoke("request", cancellationSource.Token));
+            async () => await client.InvokeAsync("request", cancellationSource.Token));
 
         Assert.Equal(0, sendCount);
         Assert.Equal(1, abortCount);
@@ -137,9 +137,9 @@ public class InvokeTests
 
         using var _ = context.Subscribe(sendEvent, _ => sendCount++);
 
-        var invoke = CreateInvoker(context, definition);
+        var client = context.CreateInvokeClient(definition);
         var error = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await invoke("request", CancellationToken.None));
+            async () => await client.InvokeAsync("request", CancellationToken.None));
 
         Assert.Same(fatalError, error);
         Assert.Equal(0, sendCount);
@@ -202,10 +202,10 @@ public class InvokeTests
                 new ReceivePayload<string>(envelope.Body.InvokeId, "completed")));
         });
 
-        var invoke = CreateInvoker(context, definition);
+        var client = context.CreateInvokeClient(definition);
         using var cancellationSource = new CancellationTokenSource();
 
-        var pending = invoke("request", cancellationSource.Token);
+        var pending = client.InvokeAsync("request", cancellationSource.Token);
         await context.BlockedDisposeStarted.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         cancellationSource.Cancel();
@@ -226,11 +226,11 @@ public class InvokeTests
         using var _ = context.RegisterInvokeHandler(definition,
             (request, _) => Task.FromResult(request * 2));
 
-        var invoke = CreateInvoker(context, definition);
+        var client = context.CreateInvokeClient(definition);
         var results = await Task.WhenAll(
-            invoke(10, CancellationToken.None),
-            invoke(20, CancellationToken.None),
-            invoke(50, CancellationToken.None));
+            client.InvokeAsync(10, CancellationToken.None),
+            client.InvokeAsync(20, CancellationToken.None),
+            client.InvokeAsync(50, CancellationToken.None));
 
         Assert.Equal([20, 40, 100], results);
     }
@@ -250,8 +250,8 @@ public class InvokeTests
         using var _ = context.RegisterInvokeHandler(definition, handler);
         using var __ = context.RegisterInvokeHandler(definition, handler);
 
-        var invoke = CreateInvoker(context, definition);
-        var result = await invoke(21, CancellationToken.None);
+        var client = context.CreateInvokeClient(definition);
+        var result = await client.InvokeAsync(21, CancellationToken.None);
 
         Assert.Equal(42, result);
         Assert.Equal(1, callCount);
@@ -279,15 +279,15 @@ public class InvokeTests
                 return Task.FromResult(request);
             });
 
-        var invoke = CreateInvoker(context, definition);
+        var client = context.CreateInvokeClient(definition);
 
-        await invoke("test", CancellationToken.None);
+        await client.InvokeAsync("test", CancellationToken.None);
         Assert.Equal(1, strongCalls);
         Assert.Equal(1, weakCalls);
 
         weakSubscription.Dispose();
 
-        await invoke("test", CancellationToken.None);
+        await client.InvokeAsync("test", CancellationToken.None);
         Assert.Equal(2, strongCalls);
         Assert.Equal(1, weakCalls);
     }
@@ -538,21 +538,6 @@ public class InvokeTests
         await Task.Delay(200, TestContext.Current.CancellationToken);
 
         Assert.False(responseEmitted.Task.IsCompleted);
-    }
-
-    private static Func<TRequest, CancellationToken, Task<TResponse>> CreateInvoker<TResponse, TRequest>(
-        IEventContext context,
-        InvokeEventDefinition<TResponse, TRequest> definition)
-    {
-        return (request, cancellationToken) => context.InvokeAsync(definition, request, cancellationToken);
-    }
-
-    private static Func<TRequest, CancellationToken, Task<TResponse>> CreateInvoker<TResponse, TRequest>(
-        Func<IEventContext> contextFactory,
-        InvokeEventDefinition<TResponse, TRequest> definition)
-    {
-        return (request, cancellationToken) =>
-            EventInvoke.InvokeAsync(contextFactory, definition, request, cancellationToken);
     }
 
     private sealed record CancelRequest(int Value);

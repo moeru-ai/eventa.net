@@ -5,7 +5,7 @@ namespace Eventa.Tests;
 public class IdiomaticApiTests
 {
     [Fact]
-    public async Task InvokeAsync_UsesConstructorDefinitionsAndContextRegistration()
+    public async Task CreateInvokeClient_UsesConstructorDefinitionsAndContextRegistration()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<string, string>("echo");
@@ -14,7 +14,8 @@ public class IdiomaticApiTests
             definition,
             (string request, CancellationToken _) => Task.FromResult($"handled:{request}"));
 
-        var result = await context.InvokeAsync(definition, "request", CancellationToken.None);
+        var client = context.CreateInvokeClient(definition);
+        var result = await client.InvokeAsync("request", CancellationToken.None);
 
         Assert.Equal("handled:request", result);
     }
@@ -37,15 +38,17 @@ public class IdiomaticApiTests
     }
 
     [Fact]
-    public async Task InvokeStreamAsync_UsesContextStreamRegistration()
+    public async Task CreateInvokeStreamClient_UsesContextStreamRegistration()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("count");
 
         using var _ = context.RegisterStreamHandler(definition, CountAsync);
 
+        var client = context.CreateInvokeStreamClient(definition);
+
         var results = new List<int>();
-        await foreach (var value in context.InvokeStreamAsync(definition, 3, CancellationToken.None))
+        await foreach (var value in client.InvokeAsync(3, CancellationToken.None))
         {
             results.Add(value);
         }
