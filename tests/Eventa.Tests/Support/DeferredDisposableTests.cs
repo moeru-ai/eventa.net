@@ -3,6 +3,20 @@ namespace Eventa.Tests;
 public class DeferredDisposableTests
 {
     [Fact]
+    public void Dispose_AfterAttachingDisposable_DisposesOwnedDisposableOnce()
+    {
+        var deferredDisposable = new DeferredDisposable();
+        var disposable = new CountingDisposable();
+
+        deferredDisposable.Attach(disposable);
+
+        deferredDisposable.Dispose();
+        deferredDisposable.Dispose();
+
+        Assert.Equal(1, disposable.DisposeCount);
+    }
+
+    [Fact]
     public void Attach_WhenCalledTwice_DisposeStillCleansUpOriginalRegistration()
     {
         using var cancellationSource = new CancellationTokenSource();
@@ -35,5 +49,15 @@ public class DeferredDisposableTests
         cancellationSource.Cancel();
 
         Assert.Equal(0, Volatile.Read(ref callbackCount));
+    }
+
+    private sealed class CountingDisposable : IDisposable
+    {
+        public int DisposeCount { get; private set; }
+
+        public void Dispose()
+        {
+            DisposeCount++;
+        }
     }
 }
