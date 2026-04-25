@@ -36,7 +36,7 @@ Current C# target: `InvokeTests.cs`
 Status: `covered` + `extra`
 Current C# target: `StreamTests.cs`
 
-- Covered: server-streaming, `ToStreamHandler`, concurrent streams, error surfacing, abort stream, cancel stream via async enumerator disposal, abort request stream with paced input, abort request stream before first item, request stream input, `ToStreamHandler` + stream input.
+- Covered: server-streaming, sync lazy context, `ToStreamHandler`, concurrent streams, error surfacing, abort stream, cancel stream via async enumerator disposal, abort request stream with paced input, abort request stream before first item, request stream input, `ToStreamHandler` + stream input.
 - Extra C# contract: empty request streams are intentionally supported both through the public `IAsyncEnumerable<TRequest>` input path and at the protocol layer by materializing a handler when `sendEventStreamEnd` arrives before the first item, even though current TypeScript `stream.ts` ignores `sendEventStreamEnd` for unknown `invokeId`.
 - Extra C# contract: in bidirectional request streams, disposing the response async enumerator or letting the handler complete the response stream early cancels the outbound request producer and prevents late request items or accidental reinvocation.
 - Extra C# contract: aborting a request stream before the first item is surfaced to the handler as cancellation rather than a protocol receive-error path; the handler sees a canceled token and no `receiveError` event is emitted.
@@ -85,7 +85,7 @@ Current C# target: none
 
 Status: `extra`
 
-- Public C# API smoke coverage for constructor-created definitions and context-first extension methods introduced by the idiomatic API refactor: `RegisterInvokeHandler`/`InvokeAsync`, `SubscribeOnce`/`Subscribe`/`Unsubscribe`, and `RegisterStreamHandler`/`InvokeStreamAsync`.
+- Public C# API smoke coverage for constructor-created definitions and context-first extension methods introduced by the idiomatic API refactor: `CreateInvokeClient`/`RegisterInvokeHandler`, `CreateInvokeStreamClient`/`RegisterStreamHandler`, and `SubscribeOnce`/`Subscribe`/`Unsubscribe`.
 
 ### `MatchExpressionTests.cs`
 
