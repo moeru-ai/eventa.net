@@ -4,8 +4,8 @@ public static class EventStream
 {
     #region Client Invoke API
 
-    public static IAsyncEnumerable<TResponse> DefineStreamInvoke<TResponse, TRequest>(
-        IEventContext context,
+    public static IAsyncEnumerable<TResponse> InvokeStreamAsync<TResponse, TRequest>(
+        this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
         TRequest request,
         CancellationToken cancellationToken = default)
@@ -32,8 +32,8 @@ public static class EventStream
             });
     }
 
-    public static IAsyncEnumerable<TResponse> DefineStreamInvoke<TResponse, TRequest>(
-        IEventContext context,
+    public static IAsyncEnumerable<TResponse> InvokeStreamAsync<TResponse, TRequest>(
+        this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
         IAsyncEnumerable<TRequest> request,
         CancellationToken cancellationToken = default)
@@ -74,8 +74,8 @@ public static class EventStream
 
     #region Handler Registration API
 
-    public static IDisposable DefineStreamInvokeHandler<TResponse, TRequest>(
-        IEventContext context,
+    public static IDisposable RegisterStreamHandler<TResponse, TRequest>(
+        this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
         Func<TRequest, CancellationToken, IAsyncEnumerable<TResponse>> handler)
     {
@@ -138,15 +138,15 @@ public static class EventStream
 
         var subscriptions = new List<IDisposable>
         {
-            context.On(events.Send, envelope => _ = HandleInvokeAsync(envelope.Body.InvokeId, envelope.Body.Content)),
-            context.On(events.SendAbort, envelope => inflight.TryCancel(envelope.Body.InvokeId)),
+            context.Subscribe(events.Send, envelope => _ = HandleInvokeAsync(envelope.Body.InvokeId, envelope.Body.Content)),
+            context.Subscribe(events.SendAbort, envelope => inflight.TryCancel(envelope.Body.InvokeId)),
         };
 
         return new HandlerRegistration(subscriptions, inflight.CancelAllAndDispose);
     }
 
-    public static IDisposable DefineStreamInvokeHandler<TResponse, TRequest>(
-        IEventContext context,
+    public static IDisposable RegisterStreamHandler<TResponse, TRequest>(
+        this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
         Func<IAsyncEnumerable<TRequest>, CancellationToken, IAsyncEnumerable<TResponse>> handler)
     {
@@ -211,17 +211,17 @@ public static class EventStream
 
         var subscriptions = new List<IDisposable>
         {
-            context.On(events.Send, envelope =>
+            context.Subscribe(events.Send, envelope =>
             {
                 GetOrCreateState(envelope.Body.InvokeId).Requests.TryWrite(envelope.Body.Content);
             }),
-            context.On(events.SendStreamEnd, envelope =>
+            context.Subscribe(events.SendStreamEnd, envelope =>
             {
                 // Keep empty request streams as a supported C# contract even though
                 // current TypeScript stream.ts ignores unknown invokeIds here.
                 GetOrCreateState(envelope.Body.InvokeId).Requests.Complete();
             }),
-            context.On(events.SendAbort, envelope =>
+            context.Subscribe(events.SendAbort, envelope =>
             {
                 // Keep pre-first-item aborts as a supported C# contract; current
                 // TypeScript stream.ts also materializes unknown invokeIds on abort
@@ -320,21 +320,21 @@ public static class EventStream
 
         private void SubscribeToResponses()
         {
-            _subscriptions.Add(context.On(events.Receive, envelope =>
+            _subscriptions.Add(context.Subscribe(events.Receive, envelope =>
             {
                 if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, _invokeId)) return;
 
                 _responses.TryWrite(envelope.Body.Content);
             }));
 
-            _subscriptions.Add(context.On(events.ReceiveError, envelope =>
+            _subscriptions.Add(context.Subscribe(events.ReceiveError, envelope =>
             {
                 if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, _invokeId)) return;
 
                 Fault(envelope.Body.Error);
             }));
 
-            _subscriptions.Add(context.On(events.ReceiveStreamEnd, envelope =>
+            _subscriptions.Add(context.Subscribe(events.ReceiveStreamEnd, envelope =>
             {
                 if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, _invokeId)) return;
 

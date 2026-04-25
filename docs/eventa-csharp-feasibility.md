@@ -232,7 +232,7 @@ Key mapping decisions:
 | `Eventa<P>.id` is a string | `string Id` property, manually assigned or generated | Keeps compatibility |
 | `EventContext` implemented as a closure | `class EventContext` + `IEventContext` | Fits C# OOP conventions |
 | `emit(event, payload)` | `void Emit<TPayload>(EventDefinition<TPayload> eventDef, TPayload payload)` | Generic constraints preserve type safety |
-| `on()` returns an unsubscribe function | Returns `IDisposable` subscription token | Matches .NET resource-management conventions (`using`) |
+| `on()` returns an unsubscribe function | `Subscribe()` returns `IDisposable` subscription token | Matches .NET resource-management conventions (`using`) |
 | `Promise<Res>` | `Task<TRes>` / `ValueTask<TRes>` | Native async model in .NET |
 | `AbortSignal` / `AbortController` | `CancellationToken` / `CancellationTokenSource` | Native cancellation model in .NET |
 | `ReadableStream<T>` | `IAsyncEnumerable<T>` or `Channel<T>` | Native async-stream primitives in .NET |
@@ -269,15 +269,11 @@ public record MatchExpression<TPayload>(
     Func<EventEnvelope<TPayload>, bool> Matcher
 );
 
-// Static factory
-public static class Eventa
-{
-    public static EventDefinition<TPayload> Define<TPayload>(string? id = null)
-        => new(id ?? IdGenerator.New());
-
-    public static InvokeEventDefinition<TRes, TReq> DefineInvoke<TRes, TReq>(string? tag = null)
-        => new(tag ?? IdGenerator.New());
-}
+// Definitions are created directly with constructors:
+// new EventDefinition<TPayload>()
+// new EventDefinition<TPayload>("event-id")
+// new InvokeEventDefinition<TRes, TReq>()
+// new InvokeEventDefinition<TRes, TReq>("tag")
 ```
 
 ### 3.3 EventContext
@@ -287,20 +283,20 @@ public interface IEventContext : IDisposable
 {
     void Emit<TPayload>(EventDefinition<TPayload> eventDef, TPayload payload);
 
-    IDisposable On<TPayload>(
+    IDisposable Subscribe<TPayload>(
         EventDefinition<TPayload> eventDef,
         Action<EventEnvelope<TPayload>> handler);
 
-    IDisposable Once<TPayload>(
+    IDisposable SubscribeOnce<TPayload>(
         EventDefinition<TPayload> eventDef,
         Action<EventEnvelope<TPayload>> handler);
 
-    void Off<TPayload>(
+    void Unsubscribe<TPayload>(
         EventDefinition<TPayload> eventDef,
         Action<EventEnvelope<TPayload>>? handler = null);
 
     // Match-expression overload
-    IDisposable On<TPayload>(
+    IDisposable Subscribe<TPayload>(
         MatchExpression<TPayload> match,
         Action<EventEnvelope<TPayload>> handler);
 }
@@ -313,8 +309,8 @@ public record EventEnvelope<TPayload>(string EventId, TPayload Body);
 
 - Use `ConcurrentDictionary<string, ConcurrentBag<Delegate>>` internally for
   thread safety. TS does not need this because it is single-threaded; C# does.
-- `On()` returns `IDisposable`; calling `Dispose()` unsubscribes.
-- `Once()` registers a handler that automatically removes itself after the first
+- `Subscribe()` returns `IDisposable`; calling `Dispose()` unsubscribes.
+- `SubscribeOnce()` registers a handler that automatically removes itself after the first
   invocation, just like TS.
 - Match expressions live in a separate dictionary, and `Emit()` evaluates each
   matcher when dispatching.
@@ -325,51 +321,50 @@ public record EventEnvelope<TPayload>(string EventId, TPayload Body);
 public static class EventInvoke
 {
     /// <summary>
-    /// Creates a client-side invoke function (unary RPC)
+    /// Executes a client-side unary invoke.
     /// </summary>
-    public static Func<TReq, CancellationToken, Task<TRes>> DefineInvoke<TRes, TReq>(
-        IEventContext ctx,
-        InvokeEventDefinition<TRes, TReq> eventDef)
+    public static Task<TRes> InvokeAsync<TRes, TReq>(
+        this IEventContext ctx,
+        InvokeEventDefinition<TRes, TReq> eventDef,
+        TReq request,
+        CancellationToken ct = default)
     {
-        return async (req, ct) =>
+        var invokeId = IdGenerator.New();
+        var tcs = new TaskCompletionSource<TRes>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // CancellationToken registration
+        using var ctr = ct.Register(() =>
         {
-            var invokeId = IdGenerator.New();
-            var tcs = new TaskCompletionSource<TRes>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
+            ctx.Emit(/* sendAbort */, new AbortPayload(invokeId, ct.ToString()));
+            tcs.TrySetCanceled(ct);
+        });
 
-            // CancellationToken registration
-            using var ctr = ct.Register(() =>
-            {
-                ctx.Emit(/* sendAbort */, new AbortPayload(invokeId, ct.ToString()));
-                tcs.TrySetCanceled(ct);
-            });
+        // Listen to receiveEvent-{invokeId}
+        using var onReceive = ctx.Subscribe(receiveEvent, envelope =>
+        {
+            if (envelope.Body.InvokeId != invokeId) return;
+            tcs.TrySetResult(envelope.Body.Content);
+        });
 
-            // Listen to receiveEvent-{invokeId}
-            using var onReceive = ctx.On(receiveEvent, envelope =>
-            {
-                if (envelope.Body.InvokeId != invokeId) return;
-                tcs.TrySetResult(envelope.Body.Content);
-            });
+        // Listen to receiveEventError-{invokeId}
+        using var onError = ctx.Subscribe(receiveErrorEvent, envelope =>
+        {
+            if (envelope.Body.InvokeId != invokeId) return;
+            tcs.TrySetException(envelope.Body.Error);
+        });
 
-            // Listen to receiveEventError-{invokeId}
-            using var onError = ctx.On(receiveErrorEvent, envelope =>
-            {
-                if (envelope.Body.InvokeId != invokeId) return;
-                tcs.TrySetException(envelope.Body.Error);
-            });
+        // Send the request
+        ctx.Emit(sendEvent, new SendPayload<TReq>(invokeId, request));
 
-            // Send the request
-            ctx.Emit(sendEvent, new SendPayload<TReq>(invokeId, req));
-
-            return await tcs.Task;
-        };
+        return tcs.Task;
     }
 
     /// <summary>
     /// Registers a server-side invoke handler
     /// </summary>
-    public static IDisposable DefineInvokeHandler<TRes, TReq>(
-        IEventContext ctx,
+    public static IDisposable RegisterInvokeHandler<TRes, TReq>(
+        this IEventContext ctx,
         InvokeEventDefinition<TRes, TReq> eventDef,
         Func<TReq, CancellationToken, Task<TRes>> handler)
     {
@@ -403,7 +398,7 @@ public interface IEventaAdapter : IDisposable
     void OnSent(string eventId, object envelope, object? options = null);
 
     /// <summary>
-    /// Called when ctx.on()/ctx.once() matches an incoming message (observation hook).
+    /// Called when ctx.Subscribe()/ctx.SubscribeOnce() matches an incoming message (observation hook).
     /// eventId may be a match-expression id; the original event id remains in envelope.EventId.
     /// </summary>
     void OnReceived(string eventId, object envelope);
@@ -478,8 +473,8 @@ public static class EventStream
     /// <summary>
     /// Server-streaming response
     /// </summary>
-    public static IAsyncEnumerable<TRes> DefineStreamInvoke<TRes, TReq>(
-        IEventContext ctx,
+    public static IAsyncEnumerable<TRes> InvokeStreamAsync<TRes, TReq>(
+        this IEventContext ctx,
         InvokeEventDefinition<TRes, TReq> eventDef,
         TReq request,
         CancellationToken ct = default)
@@ -493,8 +488,8 @@ public static class EventStream
     /// <summary>
     /// Registers a streaming handler (using async yield)
     /// </summary>
-    public static IDisposable DefineStreamInvokeHandler<TRes, TReq>(
-        IEventContext ctx,
+    public static IDisposable RegisterStreamHandler<TRes, TReq>(
+        this IEventContext ctx,
         InvokeEventDefinition<TRes, TReq> eventDef,
         Func<TReq, CancellationToken, IAsyncEnumerable<TRes>> handler)
     {
@@ -521,7 +516,7 @@ public static class EventStream
 Func<IAsyncEnumerable<TReq>, CancellationToken, IAsyncEnumerable<TRes>> bidiHandler;
 
 // Usage
-await foreach (var response in StreamInvoke(inputStream, ct))
+await foreach (var response in ctx.InvokeStreamAsync(events, inputStream, ct))
 {
     Console.WriteLine(response);
 }
@@ -695,10 +690,10 @@ public class EventContextTests
     public void Should_RegisterAndEmit()
     {
         var ctx = EventContext.Create();
-        var testEvent = Eventa.Define<TestData>();
+        var testEvent = new EventDefinition<TestData>();
         var received = new List<EventEnvelope<TestData>>();
 
-        using var sub = ctx.On(testEvent, e => received.Add(e));
+        using var sub = ctx.Subscribe(testEvent, e => received.Add(e));
         ctx.Emit(testEvent, new TestData("test"));
 
         received.Should().ContainSingle()
@@ -709,10 +704,10 @@ public class EventContextTests
     public void Should_HandleOnce()
     {
         var ctx = EventContext.Create();
-        var testEvent = Eventa.Define<string>();
+        var testEvent = new EventDefinition<string>();
         var count = 0;
 
-        using var sub = ctx.Once(testEvent, _ => count++);
+        using var sub = ctx.SubscribeOnce(testEvent, _ => count++);
         ctx.Emit(testEvent, "a");
         ctx.Emit(testEvent, "b");
 
@@ -723,10 +718,10 @@ public class EventContextTests
     public void Should_RemoveListenerViaDispose()
     {
         var ctx = EventContext.Create();
-        var testEvent = Eventa.Define<string>();
+        var testEvent = new EventDefinition<string>();
         var count = 0;
 
-        var sub = ctx.On(testEvent, _ => count++);
+        var sub = ctx.Subscribe(testEvent, _ => count++);
         sub.Dispose();
         ctx.Emit(testEvent, "test");
 
@@ -744,13 +739,11 @@ public class InvokeTests
     public async Task Should_HandleRequestResponse()
     {
         var ctx = EventContext.Create();
-        var events = Eventa.DefineInvoke<UserResponse, UserRequest>();
+        var events = new InvokeEventDefinition<UserResponse, UserRequest>();
 
-        using var handler = EventInvoke.DefineInvokeHandler(ctx, events,
-            (req, ct) => Task.FromResult(new UserResponse($"user-{req.Name}")));
+        using var handler = ctx.RegisterInvokeHandler(events, (req, ct) => Task.FromResult(new UserResponse($"user-{req.Name}")));
 
-        var invoke = EventInvoke.DefineInvoke(ctx, events);
-        var result = await invoke(new UserRequest("alice"), CancellationToken.None);
+        var result = await ctx.InvokeAsync(events, new UserRequest("alice"), CancellationToken.None);
 
         result.Id.Should().Be("user-alice");
     }
@@ -759,14 +752,11 @@ public class InvokeTests
     public async Task Should_PropagateHandlerErrors()
     {
         var ctx = EventContext.Create();
-        var events = Eventa.DefineInvoke<string, string>();
+        var events = new InvokeEventDefinition<string, string>();
 
-        using var handler = EventInvoke.DefineInvokeHandler<string, string>(ctx, events,
-            (_, _) => throw new InvalidOperationException("handler failed"));
+        using var handler = ctx.RegisterInvokeHandler(events, (_, _) => throw new InvalidOperationException("handler failed"));
 
-        var invoke = EventInvoke.DefineInvoke(ctx, events);
-
-        var act = () => invoke("test", CancellationToken.None);
+        var act = () => ctx.InvokeAsync(events, "test", CancellationToken.None);
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("handler failed");
     }
@@ -775,18 +765,16 @@ public class InvokeTests
     public async Task Should_CancelViaToken()
     {
         var ctx = EventContext.Create();
-        var events = Eventa.DefineInvoke<string, int>();
+        var events = new InvokeEventDefinition<string, int>();
         var cts = new CancellationTokenSource();
 
-        using var handler = EventInvoke.DefineInvokeHandler(ctx, events,
-            async (_, ct) =>
+        using var handler = ctx.RegisterInvokeHandler(events, async (_, ct) =>
             {
                 await Task.Delay(Timeout.Infinite, ct); // wait for cancellation
                 return "ok";
             });
 
-        var invoke = EventInvoke.DefineInvoke(ctx, events);
-        var task = invoke(42, cts.Token);
+        var task = ctx.InvokeAsync(events, 42, cts.Token);
 
         cts.Cancel();
 
@@ -798,17 +786,14 @@ public class InvokeTests
     public async Task Should_HandleConcurrentInvokes()
     {
         var ctx = EventContext.Create();
-        var events = Eventa.DefineInvoke<int, int>();
+        var events = new InvokeEventDefinition<int, int>();
 
-        using var handler = EventInvoke.DefineInvokeHandler(ctx, events,
-            (val, _) => Task.FromResult(val * 2));
-
-        var invoke = EventInvoke.DefineInvoke(ctx, events);
+        using var handler = ctx.RegisterInvokeHandler(events, (val, _) => Task.FromResult(val * 2));
 
         var results = await Task.WhenAll(
-            invoke(10, default),
-            invoke(20, default),
-            invoke(50, default));
+            ctx.InvokeAsync(events, 10, default),
+            ctx.InvokeAsync(events, 20, default),
+            ctx.InvokeAsync(events, 50, default));
 
         results.Should().Equal(20, 40, 100);
     }
@@ -824,16 +809,12 @@ public class StreamTests
     public async Task Should_StreamServerResponses()
     {
         var ctx = EventContext.Create();
-        var events = Eventa.DefineInvoke<ProgressOrResult, JobRequest>();
+        var events = new InvokeEventDefinition<ProgressOrResult, JobRequest>();
 
-        using var handler = EventStream.DefineStreamInvokeHandler(ctx, events,
-            async (req, ct) => ServerStreamImpl(req, ct));
+        using var handler = ctx.RegisterStreamHandler(events, async (req, ct) => ServerStreamImpl(req, ct));
 
         var results = new List<ProgressOrResult>();
-        await foreach (var item in EventStream.DefineStreamInvoke(
-            ctx,
-            events,
-            new JobRequest("alice"),
+        await foreach (var item in ctx.InvokeStreamAsync(events, new JobRequest("alice"),
             default))
         {
             results.Add(item);
@@ -867,8 +848,8 @@ Eventa.sln
 │   │   ├── EventDefinition.cs           # record EventDefinition<T>
 │   │   ├── EventContext.cs              # IEventContext implementation
 │   │   ├── InvokeEventDefinition.cs     # the 7 related invoke events
-│   │   ├── EventInvoke.cs               # defineInvoke / defineInvokeHandler
-│   │   ├── EventStream.cs               # defineStreamInvoke / defineStreamInvokeHandler
+│   │   ├── EventInvoke.cs               # InvokeAsync / RegisterInvokeHandler
+│   │   ├── EventStream.cs               # InvokeStreamAsync / RegisterStreamHandler
 │   │   ├── MatchExpression.cs           # matchBy / and / or
 │   │   ├── IEventaAdapter.cs            # adapter interface
 │   │   └── IdGenerator.cs               # nanoid equivalent
@@ -919,7 +900,7 @@ Eventa.sln
 | Concern | Explanation | Recommendation |
 |------|------|------|
 | **Thread safety** | TS is single-threaded; C# must handle concurrent access | Use `ConcurrentDictionary` plus `lock`/`ReaderWriterLockSlim` where needed |
-| **Memory leaks** | TS relies on GC and closures; C# event subscriptions are strong references | `On()` should return `IDisposable`; encourage `using` |
+| **Memory leaks** | TS relies on GC and closures; C# event subscriptions are strong references | `Subscribe()` should return `IDisposable`; encourage `using` |
 | **Exception propagation** | TS catches everything uniformly; C# distinguishes `Exception` and `OperationCanceledException` | Wrap handler errors in `EventaInvokeException`; preserve `OperationCanceledException` for cancellation |
 | **Serialization** | TS uses JSON / Structured Clone; C# must choose explicitly | Default to `System.Text.Json`; let adapters plug in `IEventaSerializer` |
 | **Performance** | `Channel<T>` can outperform TS `ReadableStream` for high-throughput buffering | Use `BoundedChannelOptions` to control backpressure |
@@ -940,10 +921,10 @@ Eventa.sln
 ### Phase 1 - Core Library (`Eventa.Core`)
 
 1. Define `EventDefinition<T>` / `InvokeEventDefinition<TRes, TReq>` as records
-2. Implement `EventContext` (in-memory loopback, emit/on/once/off)
-3. Implement `DefineInvoke` / `DefineInvokeHandler` (including
+2. Implement `EventContext` (in-memory loopback, Emit/Subscribe/SubscribeOnce/Unsubscribe)
+3. Implement `InvokeAsync` / `RegisterInvokeHandler` (including
    `CancellationToken` and streaming request input)
-4. Implement `DefineStreamInvoke` / `DefineStreamInvokeHandler`
+4. Implement `InvokeStreamAsync` / `RegisterStreamHandler`
    (`IAsyncEnumerable`)
 5. Implement `MatchExpression`, `And()`, and `Or()`
 6. Port the full unit-test matrix from the TS specs

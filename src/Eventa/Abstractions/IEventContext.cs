@@ -26,19 +26,19 @@ public interface IEventContext : IDisposable
         TOptions options)
         where TOptions : class;
 
-    IDisposable On<TPayload>(
+    IDisposable Subscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler);
 
-    IDisposable Once<TPayload>(
+    IDisposable SubscribeOnce<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler);
 
-    void Off<TPayload>(
+    void Unsubscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>>? handler = null);
 
-    IDisposable On<TPayload>(
+    IDisposable Subscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler);
 }

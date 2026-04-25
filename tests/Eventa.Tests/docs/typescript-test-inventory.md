@@ -14,10 +14,10 @@ Status labels:
 Status: `covered` + `extra`
 Current C# target: `EventContextTests.cs`
 
-- Covers register+emit, same handler only once, once listeners, `off(event)`, returned disposer, `off(event, handler)`, and returned disposer for a specific listener.
+- Covers `Subscribe`+`Emit`, same handler only once, `SubscribeOnce` listeners, `Unsubscribe(event)`, returned disposer, `Unsubscribe(event, handler)`, and returned disposer for a specific listener.
 - Extra C# contract: `MatchExpression` subscriptions are integrated into `EventContext` dispatch and only receive matching payloads.
 - Extra C# contract: adapter-aware contexts surface local and match-expression dispatches through `IEventaAdapter.OnReceived` using `EventEnvelope<TPayload>` values, preserve the original event id in `envelope.EventId` even when `eventId` is a match-expression id, call `OnSent` only after local processing completes, and skip `OnSent` entirely if a local listener throws.
-- Extra C# contract: the default `EventContext` fails fast if one `EventDefinition.Id` or `MatchExpression.Id` is reused with a different payload type inside the same context; first use via `On`, `Once`, or either `Emit` overload establishes that binding, `off(event)` does not release it, and only a different `EventContext` can rebind the same identifier.
+- Extra C# contract: the default `EventContext` fails fast if one `EventDefinition.Id` or `MatchExpression.Id` is reused with a different payload type inside the same context; first use via `Subscribe`, `SubscribeOnce`, or either `Emit` overload establishes that binding, `Unsubscribe(event)` does not release it, and only a different `EventContext` can rebind the same identifier.
 
 ### `invoke.spec.ts`
 
@@ -49,7 +49,7 @@ Current C# target: `StreamTests.cs`
 ### `invoke-shared.spec.ts`
 
 Status: `adapted`
-Current C# target: `EventaTests.cs`, `Primitives/InvokeEventDefinitionTests.cs`
+Current C# target: `DefinitionConstructionTests.cs`, `Primitives/InvokeEventDefinitionTests.cs`
 
 - Adapted to C# by validating tag-derived event IDs and generated uniqueness because C# exposes `Tag`/`*Id` strings rather than TS `invokeType`-tagged event objects.
 
@@ -80,6 +80,12 @@ Current C# target: none
 - `IdGeneratorTests.cs` is retained as separate extra baseline coverage below, but it is not a doc 2.2 `utils.spec.ts` parity target.
 
 ## Extra C# coverage
+
+### `IdiomaticApiTests.cs`
+
+Status: `extra`
+
+- Public C# API smoke coverage for constructor-created definitions and context-first extension methods introduced by the idiomatic API refactor: `RegisterInvokeHandler`/`InvokeAsync`, `SubscribeOnce`/`Subscribe`/`Unsubscribe`, and `RegisterStreamHandler`/`InvokeStreamAsync`.
 
 ### `MatchExpressionTests.cs`
 

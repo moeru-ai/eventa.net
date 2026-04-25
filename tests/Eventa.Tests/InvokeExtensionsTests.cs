@@ -11,7 +11,7 @@ public class InvokeExtensionsTests
 
         context.RegisterAbortEvent(fatalEvent, static payload => payload.Error);
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         var pending = invoke("request", CancellationToken.None);
 
         var expected = new InvalidOperationException("worker failed");
@@ -30,7 +30,7 @@ public class InvokeExtensionsTests
 
         context.RegisterAbortEvent(fatalEvent);
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         var pending = invoke("request", CancellationToken.None);
 
         var expected = new InvalidOperationException("worker failed");
@@ -49,7 +49,7 @@ public class InvokeExtensionsTests
 
         context.RegisterAbortEvent(fatalEvent, static _ => null);
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         var pending = invoke("request", CancellationToken.None);
 
         context.Emit(fatalEvent, new FatalEventPayload(new InvalidOperationException("ignored")));
@@ -67,13 +67,20 @@ public class InvokeExtensionsTests
 
         context.RegisterAbortEvent(fatalEvent);
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         var pending = invoke("request", CancellationToken.None);
 
         context.Emit(fatalEvent, "not-an-exception");
 
         var actual = await Assert.ThrowsAsync<InvalidOperationException>(async () => await pending);
         Assert.Equal("Pending invoke aborted by fatal event.", actual.Message);
+    }
+
+    private static Func<TRequest, CancellationToken, Task<TResponse>> CreateInvoker<TResponse, TRequest>(
+        IEventContext context,
+        InvokeEventDefinition<TResponse, TRequest> definition)
+    {
+        return (request, cancellationToken) => context.InvokeAsync(definition, request, cancellationToken);
     }
 
     private sealed record FatalEventPayload(Exception Error);

@@ -1,20 +1,20 @@
 namespace Eventa.Tests;
 
-public class EventaTests
+public class DefinitionConstructionTests
 {
     [Fact]
-    public void Define_ReturnsEventWithSuppliedId()
+    public void EventDefinition_ConstructorUsesSuppliedId()
     {
-        var definition = Eventa.Define<TestPayload>("user-created");
+        var definition = new EventDefinition<TestPayload>("user-created");
 
         Assert.Equal("user-created", definition.Id);
     }
 
     [Fact]
-    public void Define_ReturnsUniqueIdsWhenCalledTwice()
+    public void EventDefinition_DefaultConstructorUsesUniqueIds()
     {
-        var first = Eventa.Define<TestPayload>();
-        var second = Eventa.Define<TestPayload>();
+        var first = new EventDefinition<TestPayload>();
+        var second = new EventDefinition<TestPayload>();
 
         Assert.NotEmpty(first.Id);
         Assert.NotEmpty(second.Id);
@@ -22,9 +22,9 @@ public class EventaTests
     }
 
     [Fact]
-    public void DefineInvoke_ReturnsDefinitionWithRequestedTag()
+    public void InvokeEventDefinition_ConstructorUsesRequestedTag()
     {
-        var definition = Eventa.DefineInvoke<TestResponse, TestRequest>("users");
+        var definition = new InvokeEventDefinition<TestResponse, TestRequest>("users");
 
         Assert.Equal("users", definition.Tag);
         Assert.Equal("users-send", definition.SendEventId);
@@ -32,10 +32,10 @@ public class EventaTests
     }
 
     [Fact]
-    public void DefineInvoke_ReturnsUniqueTagsWhenCalledTwice()
+    public void InvokeEventDefinition_DefaultConstructorUsesUniqueTags()
     {
-        var first = Eventa.DefineInvoke<TestResponse, TestRequest>();
-        var second = Eventa.DefineInvoke<TestResponse, TestRequest>();
+        var first = new InvokeEventDefinition<TestResponse, TestRequest>();
+        var second = new InvokeEventDefinition<TestResponse, TestRequest>();
 
         Assert.NotEmpty(first.Tag);
         Assert.NotEmpty(second.Tag);

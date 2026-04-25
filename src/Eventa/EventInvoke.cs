@@ -8,37 +8,40 @@ public static class EventInvoke
 
     #region Client Invoke API
 
-    public static Func<TRequest, CancellationToken, Task<TResponse>> DefineInvoke<TResponse, TRequest>(
-        IEventContext context,
-        InvokeEventDefinition<TResponse, TRequest> eventDefinition)
+    public static Task<TResponse> InvokeAsync<TResponse, TRequest>(
+        this IEventContext context,
+        InvokeEventDefinition<TResponse, TRequest> eventDefinition,
+        TRequest request,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(eventDefinition);
 
-        return DefineInvoke(() => context, eventDefinition);
+        return InvokeAsync(() => context, eventDefinition, request, cancellationToken);
     }
 
-    public static Func<TRequest, CancellationToken, Task<TResponse>> DefineInvoke<TResponse, TRequest>(
+    public static Task<TResponse> InvokeAsync<TResponse, TRequest>(
         Func<IEventContext> contextFactory,
-        InvokeEventDefinition<TResponse, TRequest> eventDefinition)
+        InvokeEventDefinition<TResponse, TRequest> eventDefinition,
+        TRequest request,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(contextFactory);
         ArgumentNullException.ThrowIfNull(eventDefinition);
 
-        return (request, cancellationToken) =>
-            new PendingInvokeOperation<TResponse, TRequest>(
-                contextFactory(),
-                new InvokeEventBindings<TResponse, TRequest>(eventDefinition),
-                request,
-                cancellationToken).Run();
+        return new PendingInvokeOperation<TResponse, TRequest>(
+            contextFactory(),
+            new InvokeEventBindings<TResponse, TRequest>(eventDefinition),
+            request,
+            cancellationToken).Run();
     }
 
     #endregion
 
     #region Handler Registration API
 
-    public static IDisposable DefineInvokeHandler<TResponse, TRequest>(
-        IEventContext context,
+    public static IDisposable RegisterInvokeHandler<TResponse, TRequest>(
+        this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
         Func<TRequest, CancellationToken, Task<TResponse>> handler)
     {
@@ -54,8 +57,8 @@ public static class EventInvoke
                 () => CreateUnaryHandlerRegistration(context, eventDefinition, handler));
     }
 
-    public static IDisposable DefineInvokeHandler<TResponse, TRequest>(
-        IEventContext context,
+    public static IDisposable RegisterInvokeHandler<TResponse, TRequest>(
+        this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
         Func<IAsyncEnumerable<TRequest>, CancellationToken, Task<TResponse>> handler)
     {
@@ -115,8 +118,8 @@ public static class EventInvoke
 
         var subscriptions = new List<IDisposable>
         {
-            context.On(events.Send, envelope => _ = HandleInvokeAsync(envelope.Body.InvokeId, envelope.Body.Content)),
-            context.On(events.SendAbort, envelope => inflight.TryCancel(envelope.Body.InvokeId)),
+            context.Subscribe(events.Send, envelope => _ = HandleInvokeAsync(envelope.Body.InvokeId, envelope.Body.Content)),
+            context.Subscribe(events.SendAbort, envelope => inflight.TryCancel(envelope.Body.InvokeId)),
         };
 
         return new HandlerRegistration(subscriptions, inflight.CancelAllAndDispose);
@@ -167,17 +170,17 @@ public static class EventInvoke
 
         var subscriptions = new List<IDisposable>
         {
-            context.On(events.Send, envelope =>
+            context.Subscribe(events.Send, envelope =>
             {
                 GetOrCreateState(envelope.Body.InvokeId).Requests.TryWrite(envelope.Body.Content);
             }),
-            context.On(events.SendStreamEnd, envelope =>
+            context.Subscribe(events.SendStreamEnd, envelope =>
             {
                 // Keep empty request streams as a supported C# contract; current
                 // TypeScript invoke.ts also materializes unknown invokeIds here.
                 GetOrCreateState(envelope.Body.InvokeId).Requests.Complete();
             }),
-            context.On(events.SendAbort, envelope =>
+            context.Subscribe(events.SendAbort, envelope =>
             {
                 // Keep pre-first-item aborts as a supported C# contract; current
                 // TypeScript invoke.ts also materializes unknown invokeIds on abort
@@ -226,14 +229,14 @@ public static class EventInvoke
 
         private void SubscribeToResponses()
         {
-            _subscriptions.Add(context.On(events.Receive, envelope =>
+            _subscriptions.Add(context.Subscribe(events.Receive, envelope =>
             {
                 if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, _invokeId)) return;
 
                 CompleteSuccessfully(envelope.Body.Content);
             }));
 
-            _subscriptions.Add(context.On(events.ReceiveError, envelope =>
+            _subscriptions.Add(context.Subscribe(events.ReceiveError, envelope =>
             {
                 if (!StringComparer.Ordinal.Equals(envelope.Body.InvokeId, _invokeId)) return;
 

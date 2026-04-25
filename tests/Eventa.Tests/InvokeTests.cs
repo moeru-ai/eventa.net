@@ -3,35 +3,31 @@ namespace Eventa.Tests;
 public class InvokeTests
 {
     [Fact]
-    public async Task DefineInvoke_HandlesRequestResponse()
+    public async Task InvokeAsync_HandlesRequestResponse()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<UserResponse, UserRequest>("user-lookup");
 
-        using var _ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var _ = context.RegisterInvokeHandler(definition,
             (request, _) => Task.FromResult(new UserResponse($"{request.Name}-{request.Age}")));
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         var result = await invoke(new UserRequest("alice", 25), CancellationToken.None);
 
         Assert.Equal(new UserResponse("alice-25"), result);
     }
 
     [Fact]
-    public async Task DefineInvoke_SupportsSyncLazyContextFactory()
+    public async Task InvokeAsync_SupportsSyncLazyContextFactory()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<UserResponse, UserRequest>("user-lookup");
         var factoryCalls = 0;
 
-        using var _ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var _ = context.RegisterInvokeHandler(definition,
             (request, _) => Task.FromResult(new UserResponse($"{request.Name}-{request.Age}")));
 
-        var invoke = EventInvoke.DefineInvoke(() =>
+        var invoke = CreateInvoker(() =>
         {
             factoryCalls++;
             return context;
@@ -44,19 +40,17 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvoke_PropagatesHandlerErrorsWithRequestData()
+    public async Task InvokeAsync_PropagatesHandlerErrorsWithRequestData()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<UserResponse, UserRequest>("user-lookup");
 
-        using var _ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var _ = context.RegisterInvokeHandler(definition,
             (request, _) => Task.FromException<UserResponse>(
                 new InvalidOperationException(
                     $"Error processing request for {request.Name} aged {request.Age}")));
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         var actual = await Assert.ThrowsAsync<InvalidOperationException>(
             () => invoke(new UserRequest("alice", 25), CancellationToken.None));
 
@@ -64,18 +58,16 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvoke_PreservesTheExactHandlerErrorInstance()
+    public async Task InvokeAsync_PreservesTheExactHandlerErrorInstance()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<string, string>("user-lookup");
         var expected = new InvalidOperationException("invoke handler failed");
 
-        using var _ = EventInvoke.DefineInvokeHandler<string, string>(
-            context,
-            definition,
+        using var _ = context.RegisterInvokeHandler(definition,
             (string _, CancellationToken _) => Task.FromException<string>(expected));
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         var actual = await Assert.ThrowsAsync<InvalidOperationException>(
             () => invoke("request", CancellationToken.None));
 
@@ -83,15 +75,13 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvoke_AbortsInvokeAndNotifiesHandler()
+    public async Task InvokeAsync_AbortsInvokeAndNotifiesHandler()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<string, CancelRequest>("cancellable");
         var handlerNotified = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        using var _ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var _ = context.RegisterInvokeHandler(definition,
             async (CancelRequest _, CancellationToken cancellationToken) =>
             {
                 using var registration = cancellationToken.Register(() => handlerNotified.TrySetResult(true));
@@ -99,7 +89,7 @@ public class InvokeTests
                 return "completed";
             });
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         using var cancellationSource = new CancellationTokenSource();
 
         var pending = invoke(new CancelRequest(1), cancellationSource.Token);
@@ -110,7 +100,7 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvoke_WithPreCanceledToken_EmitsAbortOnlyOnce()
+    public async Task InvokeAsync_WithPreCanceledToken_EmitsAbortOnlyOnce()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<string, string>("pre-canceled");
@@ -119,10 +109,10 @@ public class InvokeTests
         var sendCount = 0;
         var abortCount = 0;
 
-        using var _ = context.On(sendEvent, _ => sendCount++);
-        using var __ = context.On(sendAbortEvent, _ => abortCount++);
+        using var _ = context.Subscribe(sendEvent, _ => sendCount++);
+        using var __ = context.Subscribe(sendAbortEvent, _ => abortCount++);
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         using var cancellationSource = new CancellationTokenSource();
         cancellationSource.Cancel();
 
@@ -134,7 +124,7 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvoke_FatalEventBeforeEmit_DoesNotSendRequest()
+    public async Task InvokeAsync_FatalEventBeforeEmit_DoesNotSendRequest()
     {
         var fatalError = new InvalidOperationException("fatal-before-send");
         var fatalEvent = new EventDefinition<Exception>("fatal-before-send-event");
@@ -145,9 +135,9 @@ public class InvokeTests
 
         context.RegisterAbortEvent(fatalEvent);
 
-        using var _ = context.On(sendEvent, _ => sendCount++);
+        using var _ = context.Subscribe(sendEvent, _ => sendCount++);
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         var error = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await invoke("request", CancellationToken.None));
 
@@ -157,7 +147,7 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvokeHandler_DoesNotEmitResponseAfterAbortWinsTheRace()
+    public async Task RegisterInvokeHandler_DoesNotEmitResponseAfterAbortWinsTheRace()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("unary-abort-wins");
@@ -169,16 +159,14 @@ public class InvokeTests
         var allowCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var responseEmitted = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        using var _ = context.On(receiveEvent, envelope =>
+        using var _ = context.Subscribe(receiveEvent, envelope =>
         {
             if (envelope.Body.InvokeId == invokeId)
             {
                 responseEmitted.TrySetResult(envelope.Body);
             }
         });
-        using var __ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var __ = context.RegisterInvokeHandler(definition,
             async (int _, CancellationToken cancellationToken) =>
             {
                 handlerStarted.TrySetResult(true);
@@ -197,7 +185,7 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvoke_DoesNotEmitAbortAfterResponseWinsTheRace()
+    public async Task InvokeAsync_DoesNotEmitAbortAfterResponseWinsTheRace()
     {
         var definition = new InvokeEventDefinition<string, string>("cancel-after-response");
         var sendEvent = new EventDefinition<SendPayload<string>>(definition.SendEventId);
@@ -206,15 +194,15 @@ public class InvokeTests
         var context = new BlockingDisposeEventContext(receiveEvent.Id);
         var abortCount = 0;
 
-        using var _ = context.On(sendAbortEvent, _ => abortCount++);
-        using var __ = context.On(sendEvent, envelope =>
+        using var _ = context.Subscribe(sendAbortEvent, _ => abortCount++);
+        using var __ = context.Subscribe(sendEvent, envelope =>
         {
             Task.Run(() => context.Emit(
                 receiveEvent,
                 new ReceivePayload<string>(envelope.Body.InvokeId, "completed")));
         });
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         using var cancellationSource = new CancellationTokenSource();
 
         var pending = invoke("request", cancellationSource.Token);
@@ -230,17 +218,15 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvoke_IsolatesConcurrentRequests()
+    public async Task InvokeAsync_IsolatesConcurrentRequests()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("double");
 
-        using var _ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var _ = context.RegisterInvokeHandler(definition,
             (request, _) => Task.FromResult(request * 2));
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         var results = await Task.WhenAll(
             invoke(10, CancellationToken.None),
             invoke(20, CancellationToken.None),
@@ -250,7 +236,7 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvokeHandler_DeduplicatesTheSameHandlerInstance()
+    public async Task RegisterInvokeHandler_DeduplicatesTheSameHandlerInstance()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("double");
@@ -261,10 +247,10 @@ public class InvokeTests
             return Task.FromResult(request * 2);
         };
 
-        using var _ = EventInvoke.DefineInvokeHandler(context, definition, handler);
-        using var __ = EventInvoke.DefineInvokeHandler(context, definition, handler);
+        using var _ = context.RegisterInvokeHandler(definition, handler);
+        using var __ = context.RegisterInvokeHandler(definition, handler);
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
         var result = await invoke(21, CancellationToken.None);
 
         Assert.Equal(42, result);
@@ -272,32 +258,28 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvokeHandler_ReturnedSubscriptionRemovesOnlyTheRequestedHandler()
+    public async Task RegisterInvokeHandler_ReturnedSubscriptionRemovesOnlyTheRequestedHandler()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<string, string>("echo");
         var strongCalls = 0;
         var weakCalls = 0;
 
-        using var _ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var _ = context.RegisterInvokeHandler(definition,
             (request, _) =>
             {
                 strongCalls++;
                 return Task.FromResult(request);
             });
 
-        var weakSubscription = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        var weakSubscription = context.RegisterInvokeHandler(definition,
             (request, _) =>
             {
                 weakCalls++;
                 return Task.FromResult(request);
             });
 
-        var invoke = EventInvoke.DefineInvoke(context, definition);
+        var invoke = CreateInvoker(context, definition);
 
         await invoke("test", CancellationToken.None);
         Assert.Equal(1, strongCalls);
@@ -311,7 +293,7 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvokeHandler_AcceptsRequestStreamProtocolMessages()
+    public async Task RegisterInvokeHandler_AcceptsRequestStreamProtocolMessages()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("sum");
@@ -323,23 +305,21 @@ public class InvokeTests
         var response = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var received = new List<int>();
 
-        using var _ = context.On(receiveEvent, envelope =>
+        using var _ = context.Subscribe(receiveEvent, envelope =>
         {
             if (envelope.Body.InvokeId == invokeId)
             {
                 response.TrySetResult(envelope.Body);
             }
         });
-        using var __ = context.On(receiveErrorEvent, envelope =>
+        using var __ = context.Subscribe(receiveErrorEvent, envelope =>
         {
             if (envelope.Body.InvokeId == invokeId)
             {
                 response.TrySetException(envelope.Body.Error);
             }
         });
-        using var ___ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var ___ = context.RegisterInvokeHandler(definition,
             async (request, cancellationToken) =>
             {
                 var sum = 0;
@@ -364,7 +344,7 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvokeHandler_AcceptsEmptyRequestStreamProtocolMessages()
+    public async Task RegisterInvokeHandler_AcceptsEmptyRequestStreamProtocolMessages()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("sum-empty");
@@ -375,23 +355,21 @@ public class InvokeTests
         var response = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var received = new List<int>();
 
-        using var _ = context.On(receiveEvent, envelope =>
+        using var _ = context.Subscribe(receiveEvent, envelope =>
         {
             if (envelope.Body.InvokeId == invokeId)
             {
                 response.TrySetResult(envelope.Body);
             }
         });
-        using var __ = context.On(receiveErrorEvent, envelope =>
+        using var __ = context.Subscribe(receiveErrorEvent, envelope =>
         {
             if (envelope.Body.InvokeId == invokeId)
             {
                 response.TrySetException(envelope.Body.Error);
             }
         });
-        using var ___ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var ___ = context.RegisterInvokeHandler(definition,
             async (request, cancellationToken) =>
             {
                 var sum = 0;
@@ -413,7 +391,7 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvokeHandler_NotifiesHandlerWhenRequestStreamIsAborted()
+    public async Task RegisterInvokeHandler_NotifiesHandlerWhenRequestStreamIsAborted()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("sum-abort");
@@ -425,9 +403,7 @@ public class InvokeTests
         var received = new List<int>();
         Exception? handlerError = null;
 
-        using var _ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var _ = context.RegisterInvokeHandler(definition,
             async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
             {
                 using var registration = cancellationToken.Register(() => handlerNotified.TrySetResult(true));
@@ -468,7 +444,7 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvokeHandler_NotifiesHandlerWhenRequestStreamIsAbortedBeforeFirstItem()
+    public async Task RegisterInvokeHandler_NotifiesHandlerWhenRequestStreamIsAbortedBeforeFirstItem()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("sum-abort-before-first-item");
@@ -479,9 +455,7 @@ public class InvokeTests
         var received = new List<int>();
         Exception? handlerError = null;
 
-        using var _ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var _ = context.RegisterInvokeHandler(definition,
             async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
             {
                 using var registration = cancellationToken.Register(() => handlerNotified.TrySetResult(true));
@@ -518,7 +492,7 @@ public class InvokeTests
     }
 
     [Fact]
-    public async Task DefineInvokeHandler_RequestStreamAbortDoesNotEmitResponseAfterAbortWinsTheRace()
+    public async Task RegisterInvokeHandler_RequestStreamAbortDoesNotEmitResponseAfterAbortWinsTheRace()
     {
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("sum-abort-ignores-cancel");
@@ -530,16 +504,14 @@ public class InvokeTests
         var allowCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var responseEmitted = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        using var _ = context.On(receiveEvent, envelope =>
+        using var _ = context.Subscribe(receiveEvent, envelope =>
         {
             if (envelope.Body.InvokeId == invokeId)
             {
                 responseEmitted.TrySetResult(envelope.Body);
             }
         });
-        using var __ = EventInvoke.DefineInvokeHandler(
-            context,
-            definition,
+        using var __ = context.RegisterInvokeHandler(definition,
             async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
             {
                 handlerStarted.TrySetResult(true);
@@ -566,6 +538,21 @@ public class InvokeTests
         await Task.Delay(200, TestContext.Current.CancellationToken);
 
         Assert.False(responseEmitted.Task.IsCompleted);
+    }
+
+    private static Func<TRequest, CancellationToken, Task<TResponse>> CreateInvoker<TResponse, TRequest>(
+        IEventContext context,
+        InvokeEventDefinition<TResponse, TRequest> definition)
+    {
+        return (request, cancellationToken) => context.InvokeAsync(definition, request, cancellationToken);
+    }
+
+    private static Func<TRequest, CancellationToken, Task<TResponse>> CreateInvoker<TResponse, TRequest>(
+        Func<IEventContext> contextFactory,
+        InvokeEventDefinition<TResponse, TRequest> definition)
+    {
+        return (request, cancellationToken) =>
+            EventInvoke.InvokeAsync(contextFactory, definition, request, cancellationToken);
     }
 
     private sealed record CancelRequest(int Value);
@@ -597,11 +584,11 @@ public class InvokeTests
             _inner.Emit(eventDefinition, payload, options);
         }
 
-        public IDisposable On<TPayload>(
+        public IDisposable Subscribe<TPayload>(
             EventDefinition<TPayload> eventDefinition,
             Action<EventEnvelope<TPayload>> handler)
         {
-            var subscription = _inner.On(eventDefinition, handler);
+            var subscription = _inner.Subscribe(eventDefinition, handler);
 
             if (StringComparer.Ordinal.Equals(eventDefinition.Id, fatalEventId))
             {
@@ -617,25 +604,25 @@ public class InvokeTests
             return subscription;
         }
 
-        public IDisposable Once<TPayload>(
+        public IDisposable SubscribeOnce<TPayload>(
             EventDefinition<TPayload> eventDefinition,
             Action<EventEnvelope<TPayload>> handler)
         {
-            return _inner.Once(eventDefinition, handler);
+            return _inner.SubscribeOnce(eventDefinition, handler);
         }
 
-        public void Off<TPayload>(
+        public void Unsubscribe<TPayload>(
             EventDefinition<TPayload> eventDefinition,
             Action<EventEnvelope<TPayload>>? handler = null)
         {
-            _inner.Off(eventDefinition, handler);
+            _inner.Unsubscribe(eventDefinition, handler);
         }
 
-        public IDisposable On<TPayload>(
+        public IDisposable Subscribe<TPayload>(
             MatchExpression<TPayload> matchExpression,
             Action<EventEnvelope<TPayload>> handler)
         {
-            return _inner.On(matchExpression, handler);
+            return _inner.Subscribe(matchExpression, handler);
         }
 
         public void Dispose()
@@ -690,7 +677,7 @@ public class InvokeTests
             Emit(eventDefinition, payload);
         }
 
-        public IDisposable On<TPayload>(
+        public IDisposable Subscribe<TPayload>(
             EventDefinition<TPayload> eventDefinition,
             Action<EventEnvelope<TPayload>> handler)
         {
@@ -730,21 +717,21 @@ public class InvokeTests
             });
         }
 
-        public IDisposable Once<TPayload>(
+        public IDisposable SubscribeOnce<TPayload>(
             EventDefinition<TPayload> eventDefinition,
             Action<EventEnvelope<TPayload>> handler)
         {
             throw new NotSupportedException();
         }
 
-        public void Off<TPayload>(
+        public void Unsubscribe<TPayload>(
             EventDefinition<TPayload> eventDefinition,
             Action<EventEnvelope<TPayload>>? handler = null)
         {
             throw new NotSupportedException();
         }
 
-        public IDisposable On<TPayload>(
+        public IDisposable Subscribe<TPayload>(
             MatchExpression<TPayload> matchExpression,
             Action<EventEnvelope<TPayload>> handler)
         {
