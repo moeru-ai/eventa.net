@@ -879,6 +879,10 @@ Eventa.sln
 
 ## 7. Risks and Differences
 
+Note: this section describes migration-time risks and design-level differences.
+For differences verified against the current playground C# implementation, see
+`playground/docs/eventa-csharp-known-differences.md`.
+
 ### 7.1 TS Features Without a Direct Equivalent
 
 | TS feature | Impact | C# alternative |

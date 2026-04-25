@@ -93,6 +93,9 @@ internal sealed class AsyncSignalEnumerator<T>(
     private int _isDisposed;
     private bool _isTerminal;
 
+    /// <summary>
+    /// Gets the item most recently read from the underlying channel.
+    /// </summary>
     public T Current { get; private set; } = default!;
 
     /// <summary>
