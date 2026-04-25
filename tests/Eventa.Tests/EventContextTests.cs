@@ -3,13 +3,13 @@ namespace Eventa.Tests;
 public class EventContextTests
 {
     [Fact]
-    public void On_and_Emit_DispatchEventEnvelope()
+    public void Subscribe_And_Emit_DispatchEventEnvelope()
     {
         var context = new EventContext();
         var definition = new EventDefinition<TestPayload>("test-event");
         EventEnvelope<TestPayload>? received = null;
 
-        using var _ = context.On(definition, envelope => received = envelope);
+        using var _ = context.Subscribe(definition, envelope => received = envelope);
 
         context.Emit(definition, new TestPayload("test"));
 
@@ -20,15 +20,15 @@ public class EventContextTests
 
     [Fact]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "Keep the handler in a variable so the same handler value is subscribed twice.")]
-    public void On_DeduplicatesTheSameHandlerInstance()
+    public void Subscribe_DeduplicatesTheSameHandlerInstance()
     {
         var context = new EventContext();
         var definition = new EventDefinition<TestPayload>("test-event");
         var callCount = 0;
         Action<EventEnvelope<TestPayload>> handler = _ => callCount++;
 
-        using var _ = context.On(definition, handler);
-        using var __ = context.On(definition, handler);
+        using var _ = context.Subscribe(definition, handler);
+        using var __ = context.Subscribe(definition, handler);
 
         context.Emit(definition, new TestPayload("test"));
 
@@ -36,14 +36,14 @@ public class EventContextTests
     }
 
     [Fact]
-    public void Once_OnlyDispatchesTheFirstMatchingEvent()
+    public void SubscribeOnce_OnlyDispatchesTheFirstMatchingEvent()
     {
         var context = new EventContext();
         var definition = new EventDefinition<TestPayload>("test-event");
         var callCount = 0;
         EventEnvelope<TestPayload>? firstEnvelope = null;
 
-        using var _ = context.Once(definition, envelope =>
+        using var _ = context.SubscribeOnce(definition, envelope =>
         {
             callCount++;
             firstEnvelope = envelope;
@@ -59,15 +59,15 @@ public class EventContextTests
     }
 
     [Fact]
-    public void Off_WithoutHandler_RemovesAllListenersForTheEvent()
+    public void Unsubscribe_WithoutHandler_RemovesAllListenersForTheEvent()
     {
         var context = new EventContext();
         var definition = new EventDefinition<TestPayload>("test-event");
         var callCount = 0;
 
-        using var _ = context.On(definition, _ => callCount++);
+        using var _ = context.Subscribe(definition, _ => callCount++);
 
-        context.Off(definition);
+        context.Unsubscribe(definition);
         context.Emit(definition, new TestPayload("test"));
 
         Assert.Equal(0, callCount);
@@ -80,7 +80,7 @@ public class EventContextTests
         var definition = new EventDefinition<TestPayload>("test-event");
         var callCount = 0;
 
-        var subscription = context.On(definition, _ => callCount++);
+        var subscription = context.Subscribe(definition, _ => callCount++);
 
         subscription.Dispose();
         context.Emit(definition, new TestPayload("test"));
@@ -90,7 +90,7 @@ public class EventContextTests
 
     [Fact]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "Keep handlers in variables so Off can remove one specific handler value.")]
-    public void Off_WithHandler_RemovesOnlyTheRequestedListener()
+    public void Unsubscribe_WithHandler_RemovesOnlyTheRequestedListener()
     {
         var context = new EventContext();
         var definition = new EventDefinition<TestPayload>("test-event");
@@ -99,15 +99,15 @@ public class EventContextTests
         Action<EventEnvelope<TestPayload>> strongHandler = _ => strongCalls++;
         Action<EventEnvelope<TestPayload>> weakHandler = _ => weakCalls++;
 
-        using var _ = context.On(definition, strongHandler);
-        using var __ = context.On(definition, weakHandler);
+        using var _ = context.Subscribe(definition, strongHandler);
+        using var __ = context.Subscribe(definition, weakHandler);
 
         context.Emit(definition, new TestPayload("test"));
 
         Assert.Equal(1, strongCalls);
         Assert.Equal(1, weakCalls);
 
-        context.Off(definition, weakHandler);
+        context.Unsubscribe(definition, weakHandler);
         context.Emit(definition, new TestPayload("test"));
 
         Assert.Equal(2, strongCalls);
@@ -125,8 +125,8 @@ public class EventContextTests
         Action<EventEnvelope<TestPayload>> strongHandler = _ => strongCalls++;
         Action<EventEnvelope<TestPayload>> weakHandler = _ => weakCalls++;
 
-        using var _ = context.On(definition, strongHandler);
-        var weakSubscription = context.On(definition, weakHandler);
+        using var _ = context.Subscribe(definition, strongHandler);
+        var weakSubscription = context.Subscribe(definition, weakHandler);
 
         context.Emit(definition, new TestPayload("test"));
 
@@ -150,7 +150,7 @@ public class EventContextTests
             envelope => envelope.Body.Value.StartsWith("match", StringComparison.Ordinal));
         var matchedValues = new List<string>();
 
-        using var _ = context.On(expression, envelope => matchedValues.Add(envelope.Body.Value));
+        using var _ = context.Subscribe(expression, envelope => matchedValues.Add(envelope.Body.Value));
 
         context.Emit(definition, new TestPayload("match-first"));
         context.Emit(definition, new TestPayload("skip"));
@@ -168,8 +168,8 @@ public class EventContextTests
         var definition = new EventDefinition<TestPayload>("test-event");
         var expression = new MatchExpression<TestPayload>("match-test-event", _ => true);
 
-        using var _ = context.On(definition, _ => calls.Add("listener"));
-        using var __ = context.On(expression, _ => calls.Add("match"));
+        using var _ = context.Subscribe(definition, _ => calls.Add("listener"));
+        using var __ = context.Subscribe(expression, _ => calls.Add("match"));
 
         context.Emit(definition, new TestPayload("test"));
 
@@ -186,7 +186,7 @@ public class EventContextTests
         using var context = new EventContext(adapter);
         var definition = new EventDefinition<TestPayload>("test-event");
 
-        using var _ = context.On(definition, _ => { });
+        using var _ = context.Subscribe(definition, _ => { });
 
         context.Emit(definition, new TestPayload("test"));
 
@@ -212,7 +212,7 @@ public class EventContextTests
         var definition = new EventDefinition<TestPayload>("test-event");
         var expression = new MatchExpression<TestPayload>("match-test-event", _ => true);
 
-        using var _ = context.On(expression, _ => { });
+        using var _ = context.Subscribe(expression, _ => { });
 
         context.Emit(definition, new TestPayload("test"));
 
@@ -232,7 +232,7 @@ public class EventContextTests
         using var context = new EventContext(adapter);
         var definition = new EventDefinition<TestPayload>("test-event");
 
-        using var _ = context.On(definition, _ => throw new InvalidOperationException("boom"));
+        using var _ = context.Subscribe(definition, _ => throw new InvalidOperationException("boom"));
 
         var error = Assert.Throws<InvalidOperationException>(() => context.Emit(definition, new TestPayload("test")));
 
@@ -241,15 +241,15 @@ public class EventContextTests
     }
 
     [Fact]
-    public void On_WhenEventIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
+    public void Subscribe_WhenEventIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
     {
         var context = new EventContext();
         var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
         var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
 
-        using var _ = context.On(firstDefinition, _ => { });
+        using var _ = context.Subscribe(firstDefinition, _ => { });
 
-        var error = Assert.Throws<InvalidOperationException>(() => context.On(secondDefinition, _ => { }));
+        var error = Assert.Throws<InvalidOperationException>(() => context.Subscribe(secondDefinition, _ => { }));
 
         AssertPayloadTypeInvariant(
             error,
@@ -257,19 +257,19 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "On");
+            operation: "Subscribe");
     }
 
     [Fact]
-    public void Once_WhenEventIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
+    public void SubscribeOnce_WhenEventIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
     {
         var context = new EventContext();
         var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
         var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
 
-        using var _ = context.Once(firstDefinition, _ => { });
+        using var _ = context.SubscribeOnce(firstDefinition, _ => { });
 
-        var error = Assert.Throws<InvalidOperationException>(() => context.Once(secondDefinition, _ => { }));
+        var error = Assert.Throws<InvalidOperationException>(() => context.SubscribeOnce(secondDefinition, _ => { }));
 
         AssertPayloadTypeInvariant(
             error,
@@ -277,7 +277,7 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Once");
+            operation: "SubscribeOnce");
     }
 
     [Fact]
@@ -287,7 +287,7 @@ public class EventContextTests
         var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
         var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
 
-        using var _ = context.On(firstDefinition, _ => { });
+        using var _ = context.Subscribe(firstDefinition, _ => { });
 
         var error = Assert.Throws<InvalidOperationException>(() => context.Emit(secondDefinition, new SecondPayload(2)));
 
@@ -309,7 +309,7 @@ public class EventContextTests
 
         context.Emit(firstDefinition, new FirstPayload("first"));
 
-        var error = Assert.Throws<InvalidOperationException>(() => context.On(secondDefinition, _ => { }));
+        var error = Assert.Throws<InvalidOperationException>(() => context.Subscribe(secondDefinition, _ => { }));
 
         AssertPayloadTypeInvariant(
             error,
@@ -317,7 +317,7 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "On");
+            operation: "Subscribe");
     }
 
     [Fact]
@@ -329,7 +329,7 @@ public class EventContextTests
 
         context.Emit(firstDefinition, new FirstPayload("first"), new EmitOptions("test"));
 
-        var error = Assert.Throws<InvalidOperationException>(() => context.On(secondDefinition, _ => { }));
+        var error = Assert.Throws<InvalidOperationException>(() => context.Subscribe(secondDefinition, _ => { }));
 
         AssertPayloadTypeInvariant(
             error,
@@ -337,19 +337,19 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "On");
+            operation: "Subscribe");
     }
 
     [Fact]
-    public void Off_WhenEventIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
+    public void Unsubscribe_WhenEventIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
     {
         var context = new EventContext();
         var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
         var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
 
-        using var _ = context.On(firstDefinition, _ => { });
+        using var _ = context.Subscribe(firstDefinition, _ => { });
 
-        var error = Assert.Throws<InvalidOperationException>(() => context.Off(secondDefinition));
+        var error = Assert.Throws<InvalidOperationException>(() => context.Unsubscribe(secondDefinition));
 
         AssertPayloadTypeInvariant(
             error,
@@ -357,21 +357,21 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Off");
+            operation: "Unsubscribe");
     }
 
     [Fact]
-    public void Off_DoesNotReleaseEventIdPayloadTypeBinding()
+    public void Unsubscribe_DoesNotReleaseEventIdPayloadTypeBinding()
     {
         var context = new EventContext();
         var firstDefinition = new EventDefinition<FirstPayload>("shared-event");
         var secondDefinition = new EventDefinition<SecondPayload>("shared-event");
 
-        using var _ = context.On(firstDefinition, _ => { });
+        using var _ = context.Subscribe(firstDefinition, _ => { });
 
-        context.Off(firstDefinition);
+        context.Unsubscribe(firstDefinition);
 
-        var error = Assert.Throws<InvalidOperationException>(() => context.On(secondDefinition, _ => { }));
+        var error = Assert.Throws<InvalidOperationException>(() => context.Subscribe(secondDefinition, _ => { }));
 
         AssertPayloadTypeInvariant(
             error,
@@ -379,7 +379,7 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "On");
+            operation: "Subscribe");
     }
 
     [Fact]
@@ -391,11 +391,11 @@ public class EventContextTests
 
         using (var firstContext = new EventContext())
         {
-            using var _ = firstContext.On(firstDefinition, _ => { });
+            using var _ = firstContext.Subscribe(firstDefinition, _ => { });
         }
 
         using var secondContext = new EventContext();
-        using var __ = secondContext.On(secondDefinition, _ => secondContextCalls++);
+        using var __ = secondContext.Subscribe(secondDefinition, _ => secondContextCalls++);
 
         secondContext.Emit(secondDefinition, new SecondPayload(2));
 
@@ -403,15 +403,15 @@ public class EventContextTests
     }
 
     [Fact]
-    public void On_WhenMatchExpressionIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
+    public void Subscribe_WhenMatchExpressionIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
     {
         var context = new EventContext();
         var firstExpression = new MatchExpression<FirstPayload>("shared-match", _ => true);
         var secondExpression = new MatchExpression<SecondPayload>("shared-match", _ => true);
 
-        using var _ = context.On(firstExpression, _ => { });
+        using var _ = context.Subscribe(firstExpression, _ => { });
 
-        var error = Assert.Throws<InvalidOperationException>(() => context.On(secondExpression, _ => { }));
+        var error = Assert.Throws<InvalidOperationException>(() => context.Subscribe(secondExpression, _ => { }));
 
         AssertPayloadTypeInvariant(
             error,
@@ -419,7 +419,7 @@ public class EventContextTests
             id: "shared-match",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "On");
+            operation: "Subscribe");
     }
 
     private static void AssertPayloadTypeInvariant(

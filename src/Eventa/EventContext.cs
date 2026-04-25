@@ -107,7 +107,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         Adapter?.OnSent(eventDefinition.Id, envelope, options);
     }
 
-    public IDisposable On<TPayload>(
+    public IDisposable Subscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler)
     {
@@ -131,7 +131,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         return new ActionDisposable(() => RemoveListener(eventDefinition.Id, handler, removeOnceListeners: false));
     }
 
-    public IDisposable Once<TPayload>(
+    public IDisposable SubscribeOnce<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler)
     {
@@ -155,7 +155,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         return new ActionDisposable(() => RemoveListener(eventDefinition.Id, handler, removeOnceListeners: true));
     }
 
-    public void Off<TPayload>(
+    public void Unsubscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>>? handler = null)
     {
@@ -177,7 +177,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         }
     }
 
-    public IDisposable On<TPayload>(
+    public IDisposable Subscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler)
     {

@@ -49,7 +49,7 @@ public static class InvokeExtensions
         {
             var registration = new AbortEventRegistration(
                 fatalEvent.Id,
-                (targetContext, onAbort) => targetContext.On(fatalEvent, envelope =>
+                (targetContext, onAbort) => targetContext.Subscribe(fatalEvent, envelope =>
                 {
                     onAbort(mapError(envelope.Body));
                 }));
