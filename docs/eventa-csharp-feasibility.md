@@ -583,7 +583,7 @@ The shared internal support types extracted in this round are:
 | `InvocationCancellationTracker` | Tracks the unary handler `invokeId -> CancellationTokenSource` map |
 | `RequestStreamInvocationState<TRequest>` | Holds the request queue, cancellation source, and execution task for request-stream handlers |
 | `RequestStreamInvocationTracker<TRequest>` | Lazily creates and publishes request-stream state, starts the handler outside the lock, and owns abort / dispose for inflight state |
-| `InvokeHandlerRegistrationFactory` / `InvokeStreamHandlerRegistrationFactory` | Keep handler-side protocol subscriptions out of the public API facade classes |
+| `InvokeHandlerRegistrationFactory` | Keeps handler-side protocol subscriptions out of the public API facade classes and now wires all four request/response shape combinations |
 
 The current implementation still preserves several constraints that are already
 anchored by tests and should not be casually erased in future refactors:
