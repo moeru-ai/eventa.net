@@ -9,6 +9,9 @@ namespace Eventa;
 /// </remarks>
 public static class InvokeExtensions
 {
+    /// <summary>
+    /// The extension-bag key that stores per-context invoke abort registrations.
+    /// </summary>
     internal const string InternalInvokeConfigKey = "__internal.invoke";
 
     /// <summary>

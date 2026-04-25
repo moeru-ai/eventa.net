@@ -1,5 +1,12 @@
 namespace Eventa;
 
+/// <summary>
+/// Observes local Eventa send and receive activity so transports can mirror or instrument it.
+/// </summary>
+/// <remarks>
+/// Implementations are called after in-process dispatch has already happened, so adapter code can
+/// forward envelopes or record telemetry without taking control of listener execution order.
+/// </remarks>
 public interface IEventaAdapter : IDisposable
 {
     /// <summary>
