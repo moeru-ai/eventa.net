@@ -6,8 +6,8 @@ namespace Eventa;
 /// </summary>
 /// <remarks>
 /// This lets callers publish a placeholder disposable into a cleanup list
-/// first, then attach the real subscription once it exists, while keeping
-/// disposal idempotent when cleanup wins the race.
+/// first, then attach the real subscription or cancellation registration once
+/// it exists, while keeping disposal idempotent when cleanup wins the race.
 /// </remarks>
 internal sealed class DeferredDisposable : IDisposable
 {

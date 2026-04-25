@@ -1,6 +1,6 @@
 namespace Eventa;
 
-internal static class StreamHandlerRegistrationFactory
+internal static class InvokeStreamHandlerRegistrationFactory
 {
     public static HandlerRegistration CreateUnary<TResponse, TRequest>(
         IEventContext context,
