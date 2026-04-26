@@ -160,6 +160,63 @@ public class EventContextTests
     }
 
     [Fact]
+    public void SubscribeOnce_WithMatchExpression_OnlyDispatchesTheFirstMatchingEvent()
+    {
+        var context = new EventContext();
+        var definition = new EventDefinition<TestPayload>("test-event");
+        var expression = new MatchExpression<TestPayload>(
+            "starts-with-match-once",
+            envelope => envelope.Body.Value.StartsWith("match", StringComparison.Ordinal));
+        var matchedValues = new List<string>();
+
+        using var _ = context.SubscribeOnce(expression, envelope => matchedValues.Add(envelope.Body.Value));
+
+        context.Emit(definition, new TestPayload("skip"));
+        context.Emit(definition, new TestPayload("match-first"));
+        context.Emit(definition, new TestPayload("match-second"));
+
+        Assert.Equal(["match-first"], matchedValues);
+    }
+
+    [Fact]
+    public void Unsubscribe_WithMatchExpressionAndNoHandler_RemovesAllListenersForTheExpression()
+    {
+        var context = new EventContext();
+        var definition = new EventDefinition<TestPayload>("test-event");
+        var expression = new MatchExpression<TestPayload>("match-all", _ => true);
+        var callCount = 0;
+
+        using var _ = context.Subscribe(expression, _ => callCount++);
+        using var __ = context.SubscribeOnce(expression, _ => callCount++);
+
+        context.Unsubscribe(expression);
+        context.Emit(definition, new TestPayload("test"));
+
+        Assert.Equal(0, callCount);
+    }
+
+    [Fact]
+    public void Unsubscribe_WithMatchExpressionAndHandler_RemovesOnlyTheRequestedListener()
+    {
+        var context = new EventContext();
+        var definition = new EventDefinition<TestPayload>("test-event");
+        var expression = new MatchExpression<TestPayload>("match-all", _ => true);
+        var strongCalls = 0;
+        var weakCalls = 0;
+        Action<EventEnvelope<TestPayload>> strongHandler = _ => strongCalls++;
+        Action<EventEnvelope<TestPayload>> weakHandler = _ => weakCalls++;
+
+        using var _ = context.Subscribe(expression, strongHandler);
+        using var __ = context.Subscribe(expression, weakHandler);
+
+        context.Unsubscribe(expression, weakHandler);
+        context.Emit(definition, new TestPayload("test"));
+
+        Assert.Equal(1, strongCalls);
+        Assert.Equal(0, weakCalls);
+    }
+
+    [Fact]
     public void Emit_CallsAdapterOnSent_AfterLocalListeners()
     {
         var calls = new List<string>();
@@ -417,6 +474,48 @@ public class EventContextTests
             error,
             bindingTarget: nameof(MatchExpression<>),
             id: "shared-match",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "Subscribe");
+    }
+
+    [Fact]
+    public void SubscribeOnce_WhenMatchExpressionIdAlreadyBoundToDifferentPayloadType_ThrowsClearException()
+    {
+        var context = new EventContext();
+        var firstExpression = new MatchExpression<FirstPayload>("shared-match-once", _ => true);
+        var secondExpression = new MatchExpression<SecondPayload>("shared-match-once", _ => true);
+
+        using var _ = context.SubscribeOnce(firstExpression, _ => { });
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.SubscribeOnce(secondExpression, _ => { }));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(MatchExpression<>),
+            id: "shared-match-once",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "SubscribeOnce");
+    }
+
+    [Fact]
+    public void Unsubscribe_WithMatchExpressionDoesNotReleasePayloadTypeBinding()
+    {
+        var context = new EventContext();
+        var firstExpression = new MatchExpression<FirstPayload>("shared-match-unsubscribe", _ => true);
+        var secondExpression = new MatchExpression<SecondPayload>("shared-match-unsubscribe", _ => true);
+
+        using var _ = context.Subscribe(firstExpression, _ => { });
+
+        context.Unsubscribe(firstExpression);
+
+        var error = Assert.Throws<InvalidOperationException>(() => context.Subscribe(secondExpression, _ => { }));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(MatchExpression<>),
+            id: "shared-match-unsubscribe",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
             operation: "Subscribe");
