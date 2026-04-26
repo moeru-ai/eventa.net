@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace Eventa.Tests;
 
 public class InvokeExtensionsTests
@@ -19,6 +21,41 @@ public class InvokeExtensionsTests
 
         var actual = await Assert.ThrowsAsync<InvalidOperationException>(async () => await pending);
         Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task RegisterAbortEvent_DoesNotAbortPendingInvokeStreams()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, string>("pending-stream");
+        var fatalEvent = new EventDefinition<object>("fatal-event");
+        var allowCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async IAsyncEnumerable<int> Handler(
+            string _,
+            [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            yield return 1;
+            await allowCompletion.Task.WaitAsync(cancellationToken);
+            yield return 2;
+        }
+
+        context.RegisterAbortEvent(fatalEvent);
+
+        using var _ = context.RegisterStreamHandler(definition, Handler);
+        var client = context.CreateInvokeStreamClient(definition);
+        await using var enumerator = client.InvokeAsync("request", CancellationToken.None)
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken);
+
+        Assert.True(await enumerator.MoveNextAsync());
+        Assert.Equal(1, enumerator.Current);
+
+        context.Emit(fatalEvent, new InvalidOperationException("ignored"));
+        allowCompletion.TrySetResult();
+
+        Assert.True(await enumerator.MoveNextAsync());
+        Assert.Equal(2, enumerator.Current);
+        Assert.False(await enumerator.MoveNextAsync());
     }
 
     [Fact]

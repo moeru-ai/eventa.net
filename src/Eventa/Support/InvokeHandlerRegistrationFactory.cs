@@ -109,32 +109,16 @@ internal static class InvokeHandlerRegistrationFactory
         TRequest request,
         Func<TRequest, CancellationToken, Task<TResponse>> handler)
     {
-        var cancellationSource = inflight.BeginTracking(invokeId);
-
-        try
-        {
-            // Skip handler activation entirely when abort won before startup.
-            if (cancellationSource.IsCancellationRequested) return;
-
-            var response = await handler(request, cancellationSource.Token).ConfigureAwait(false);
-
-            // Cancellation can still win while the handler is awaiting.
-            if (cancellationSource.IsCancellationRequested) return;
-
-            context.Emit(events.Receive, new ReceivePayload<TResponse>(invokeId, response));
-        }
-        catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested) { return; }
-        catch (Exception error)
-        {
-            if (cancellationSource.IsCancellationRequested) return;
-
-            EmitReceiveError(context, events, invokeId, error);
-        }
-        finally
-        {
-            inflight.StopTracking(invokeId);
-            cancellationSource.Dispose();
-        }
+        await RunUnaryRequestHandlerSessionAsync(
+            context,
+            events,
+            inflight,
+            invokeId,
+            async cancellationToken =>
+            {
+                var response = await handler(request, cancellationToken).ConfigureAwait(false);
+                EmitReceiveIfActive(context, events, invokeId, response, cancellationToken);
+            }).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -156,33 +140,17 @@ internal static class InvokeHandlerRegistrationFactory
         TRequest request,
         Func<TRequest, CancellationToken, IAsyncEnumerable<TResponse>> handler)
     {
-        var cancellationSource = inflight.BeginTracking(invokeId);
-
-        try
-        {
-            // Skip handler activation entirely when abort won before startup.
-            if (cancellationSource.IsCancellationRequested) return;
-
-            var responses = handler(request, cancellationSource.Token);
-            await ForwardStreamResponsesAsync(
+        await RunUnaryRequestHandlerSessionAsync(
+            context,
+            events,
+            inflight,
+            invokeId,
+            cancellationToken => ForwardStreamResponsesAsync(
                 context,
                 events,
                 invokeId,
-                responses,
-                cancellationSource.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested) { return; }
-        catch (Exception error)
-        {
-            if (cancellationSource.IsCancellationRequested) return;
-
-            EmitReceiveError(context, events, invokeId, error);
-        }
-        finally
-        {
-            inflight.StopTracking(invokeId);
-            cancellationSource.Dispose();
-        }
+                handler(request, cancellationToken),
+                cancellationToken)).ConfigureAwait(false);
     }
 
     #endregion
@@ -303,32 +271,16 @@ internal static class InvokeHandlerRegistrationFactory
         RequestStreamInvocationState<TRequest> state,
         Func<IAsyncEnumerable<TRequest>, CancellationToken, Task<TResponse>> handler)
     {
-        try
-        {
-            // Skip handler activation entirely when abort won before startup.
-            if (state.CancellationSource.IsCancellationRequested) return;
-
-            var response = await handler(
-                state.Requests.ReadAll(respectConsumerCancellation: false),
-                state.CancellationSource.Token).ConfigureAwait(false);
-
-            // Cancellation can still win while the handler is awaiting.
-            if (state.CancellationSource.IsCancellationRequested) return;
-
-            context.Emit(events.Receive, new ReceivePayload<TResponse>(state.InvokeId, response));
-        }
-        catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested) { return; }
-        catch (Exception error)
-        {
-            if (state.CancellationSource.IsCancellationRequested) return;
-
-            EmitReceiveError(context, events, state.InvokeId, error);
-        }
-        finally
-        {
-            inflight.Remove(state);
-            state.Dispose();
-        }
+        await RunRequestStreamHandlerSessionAsync(
+            context,
+            events,
+            inflight,
+            state,
+            async (request, cancellationToken) =>
+            {
+                var response = await handler(request, cancellationToken).ConfigureAwait(false);
+                EmitReceiveIfActive(context, events, state.InvokeId, response, cancellationToken);
+            }).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -348,19 +300,69 @@ internal static class InvokeHandlerRegistrationFactory
         RequestStreamInvocationState<TRequest> state,
         Func<IAsyncEnumerable<TRequest>, CancellationToken, IAsyncEnumerable<TResponse>> handler)
     {
+        await RunRequestStreamHandlerSessionAsync(
+            context,
+            events,
+            inflight,
+            state,
+            (request, cancellationToken) => ForwardStreamResponsesAsync(
+                context,
+                events,
+                state.InvokeId,
+                handler(request, cancellationToken),
+                cancellationToken)).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Runs the shared lifecycle for one unary-request handler session.
+    /// </summary>
+    private static async Task RunUnaryRequestHandlerSessionAsync<TResponse, TRequest>(
+        IEventContext context,
+        InvokeEventBindings<TResponse, TRequest> events,
+        InvocationCancellationTracker inflight,
+        string invokeId,
+        Func<CancellationToken, Task> executeAsync)
+    {
+        var cancellationSource = inflight.BeginTracking(invokeId);
+
+        try
+        {
+            // Skip handler activation entirely when abort won before startup.
+            if (cancellationSource.IsCancellationRequested) return;
+
+            await executeAsync(cancellationSource.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationSource.IsCancellationRequested) { return; }
+        catch (Exception error)
+        {
+            if (cancellationSource.IsCancellationRequested) return;
+
+            EmitReceiveError(context, events, invokeId, error);
+        }
+        finally
+        {
+            inflight.StopTracking(invokeId);
+            cancellationSource.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Runs the shared lifecycle for one request-stream handler session.
+    /// </summary>
+    private static async Task RunRequestStreamHandlerSessionAsync<TResponse, TRequest>(
+        IEventContext context,
+        InvokeEventBindings<TResponse, TRequest> events,
+        RequestStreamInvocationTracker<TRequest> inflight,
+        RequestStreamInvocationState<TRequest> state,
+        Func<IAsyncEnumerable<TRequest>, CancellationToken, Task> executeAsync)
+    {
         try
         {
             // Skip handler activation entirely when abort won before startup.
             if (state.CancellationSource.IsCancellationRequested) return;
 
-            var responses = handler(
+            await executeAsync(
                 state.Requests.ReadAll(respectConsumerCancellation: false),
-                state.CancellationSource.Token);
-            await ForwardStreamResponsesAsync(
-                context,
-                events,
-                state.InvokeId,
-                responses,
                 state.CancellationSource.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (state.CancellationSource.IsCancellationRequested) { return; }
@@ -380,6 +382,21 @@ internal static class InvokeHandlerRegistrationFactory
     #endregion
 
     #region Shared Helpers
+
+    /// <summary>
+    /// Emits the unary response payload when the invoke is still active after handler execution completes.
+    /// </summary>
+    private static void EmitReceiveIfActive<TResponse, TRequest>(
+        IEventContext context,
+        InvokeEventBindings<TResponse, TRequest> events,
+        string invokeId,
+        TResponse response,
+        CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested) return;
+
+        context.Emit(events.Receive, new ReceivePayload<TResponse>(invokeId, response));
+    }
 
     /// <summary>
     /// Emits the invoke contract's response-error event for a failed handler execution.
