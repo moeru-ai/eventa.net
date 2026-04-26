@@ -65,6 +65,7 @@ Status: `covered` + `adapted` + `extra`
 Current C# target: `InvokeExtensionsTests.cs`, `InvokeTests.cs`
 
 - Covered: pending invokes are rejected when the fatal event or registered fatal match expression fires, including the case where the fatal event completes the invoke before the client request is emitted.
+- Extra C# contract: fatal-event registrations only reject pending unary invokes; `CreateInvokeStreamClient()` sessions continue to stream normally when the same fatal event fires mid-stream.
 - Adapted: the TS `{ error }` payload pattern maps to C# via `RegisterAbortEvent<TPayload>(..., mapError)`, which can preserve the exact exception instance from a typed fatal-event payload.
 - Extra C# contract: if the fatal event fires reentrantly while its subscription is still being attached, the pending invoke still disposes that fatal-event subscription exactly once.
 - Extra C# contract: `RegisterAbortEvent(EventDefinition<object>)` also preserves the exact exception instance when the fatal-event payload is itself an `Exception`.
@@ -115,6 +116,12 @@ Status: `extra`
 Status: `extra`
 
 - Internal helper coverage for placeholder disposables that may be disposed before the real subscription or cancellation registration is attached; also asserts duplicate attachment is rejected without leaking the original cleanup handle.
+
+### `InvokeSessionEngineTests.cs`
+
+Status: `extra`
+
+- Internal client-session coverage for the shared invoke lifecycle extraction: inline and queued send faults on both unary and stream invokes fault locally without emitting `SendAbort`, keeping protocol aborts reserved for client-initiated cancellation.
 
 ### `RequestStreamInvocationTrackerTests.cs`
 
