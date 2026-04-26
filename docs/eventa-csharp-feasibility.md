@@ -881,7 +881,7 @@ Eventa.sln
 
 Note: this section describes migration-time risks and design-level differences.
 For differences verified against the current playground C# implementation, see
-`playground/docs/eventa-csharp-known-differences.md`.
+`docs/eventa-csharp-known-differences.md`.
 
 ### 7.1 TS Features Without a Direct Equivalent
 
