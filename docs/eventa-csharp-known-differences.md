@@ -1,10 +1,14 @@
 # Eventa C# Known Differences
 
-Last reviewed: 2026-04-25
+Last reviewed: 2026-04-26
 
 This document records behavior differences that are currently present in the
 playground C# implementation under `playground/src/Eventa`, compared with the
 behavior described by the TypeScript implementation comments and adjacent docs.
+
+Current status: the differences previously recorded in this file were resolved
+in the C# playground implementation. The sections below are kept as a compact
+resolution log.
 
 Scope notes:
 
@@ -14,11 +18,11 @@ Scope notes:
   - not clearly called out by the current C# XML docs.
 - It does not list every API-shape difference between TypeScript and C#.
 
-## 1. Unary Invoke Client Does Not Expose Request-Stream Input
+## 1. Unary Invoke Client Request-Stream Input
 
-### TypeScript behavior
+Status: resolved.
 
-The TypeScript unary invoke API explicitly documents request-stream support.
+The TypeScript unary invoke API explicitly documents request-stream support:
 
 - `src/invoke.ts` says unary invoke "supports unary or streaming requests, but returns a single response".
 - The same comment explains that stream input is enabled by setting `Req` to `ReadableStream<T>` or `AsyncIterable<T>`.
@@ -29,36 +33,28 @@ Relevant TypeScript references:
 - `src/invoke.ts:121`
 - `src/invoke.ts:304`
 
-### Current C# behavior
+### C# behavior
 
-The C# unary invoke surface describes the same capability at the high level, but the public client API does not expose a way to send a request stream.
+The C# unary invoke client now exposes both unary and request-stream input:
 
-- `playground/src/Eventa/EventInvoke.cs` currently says the helpers support unary requests and request streams.
-- `playground/src/Eventa/InvokeClient.cs` exposes only `InvokeAsync(TRequest request, CancellationToken cancellationToken = default)`.
-- There is no overload that accepts `IAsyncEnumerable<TRequest>` or another streaming request abstraction.
+- `InvokeAsync(TRequest request, CancellationToken cancellationToken = default)`
+- `InvokeAsync(IAsyncEnumerable<TRequest> request, CancellationToken cancellationToken = default)`
+
+The request-stream overload emits request items through the existing invoke
+protocol, emits request stream end on normal completion, and aborts without
+enumerating the producer when the caller token is already canceled.
 
 Relevant C# references:
 
-- `playground/src/Eventa/EventInvoke.cs:9`
-- `playground/src/Eventa/InvokeClient.cs:33`
+- `playground/src/Eventa/InvokeClient.cs`
+- `playground/tests/Eventa.Tests/InvokeTests.cs`
 
-### Why this matters
+## 2. MatchExpression Equivalents for TS `once()` and Bulk `off()`
 
-The server side can handle request-stream unary invokes, and the test suite verifies the protocol path by emitting protocol events directly, but callers using the current public unary client API cannot actually exercise that behavior through an idiomatic client call.
+Status: resolved.
 
-Relevant test showing protocol-only coverage:
-
-- `playground/tests/Eventa.Tests/InvokeTests.cs:296`
-
-### Recommended documentation note
-
-Until the client API grows a request-stream overload, the C# docs should say that request-stream unary invoke is currently supported at the protocol/handler level, but not yet exposed by `InvokeClient<TResponse, TRequest>`.
-
-## 2. MatchExpression Does Not Have C# Equivalents for TS `once()` and Bulk `off()`
-
-### TypeScript behavior
-
-The TypeScript context API accepts either an event or a match expression in all three registration/removal entry points.
+The TypeScript context API accepts either an event or a match expression in all
+three registration/removal entry points.
 
 - `once()` accepts `Eventa<P> | EventaMatchExpression<P>`.
 - `off()` accepts `Eventa<P> | EventaMatchExpression<P>` and can remove a specific handler or all handlers for that key.
@@ -74,34 +70,23 @@ Relevant docs reference:
 
 - `playground/docs/eventa-csharp-feasibility.md:53`
 
-### Current C# behavior
+### C# behavior
 
-The C# context supports persistent match-expression subscriptions only.
+The C# context now exposes match-expression equivalents:
 
 - `IEventContext.Subscribe(MatchExpression<TPayload>, ...)` exists.
-- There is no `SubscribeOnce(MatchExpression<TPayload>, ...)` overload.
-- There is no `Unsubscribe(MatchExpression<TPayload>, ...)` overload for removing one or all listeners by match expression.
+- `IEventContext.SubscribeOnce(MatchExpression<TPayload>, ...)` exists.
+- `IEventContext.Unsubscribe(MatchExpression<TPayload>, ...)` exists and can remove one handler or all regular/one-shot listeners for the match expression.
 
 Relevant C# references:
 
-- `playground/src/Eventa/Abstractions/IEventContext.cs:90`
-- `playground/src/Eventa/EventContext.cs:277`
-
-### Why this matters
-
-This is a real behavior contraction, not just naming drift.
-
-- TypeScript users can model one-shot pattern listeners directly.
-- TypeScript users can clear all listeners attached to one match expression key.
-- C# users currently need to hold on to individual `IDisposable` tokens and manually dispose them; there is no equivalent bulk removal or one-shot registration surface.
-
-### Recommended documentation note
-
-The C# XML docs should explicitly say that match expressions currently support persistent subscriptions only, and that one-shot or bulk-unsubscribe semantics are not yet exposed as first-class APIs.
+- `playground/src/Eventa/Abstractions/IEventContext.cs`
+- `playground/src/Eventa/EventContext.cs`
+- `playground/tests/Eventa.Tests/EventContextTests.cs`
 
 ## 3. Fatal Invoke Abort Extension Does Not Accept MatchExpression
 
-### TypeScript behavior
+Status: resolved.
 
 The TypeScript invoke-internal extension explicitly allows either an event or a match expression to terminate pending invokes.
 
@@ -113,28 +98,21 @@ Relevant TypeScript references:
 - `src/context-extension-invoke-internal.ts:11`
 - `src/context-extension-invoke-internal.ts:39`
 
-### Current C# behavior
+### C# behavior
 
-The C# invoke extension accepts only concrete `EventDefinition<TPayload>` registrations.
+The C# invoke extension now accepts concrete events and match expressions:
 
 - `RegisterAbortEvent<TPayload>(..., EventDefinition<TPayload> fatalEvent, ...)`
-- No overload accepts `MatchExpression<TPayload>`.
+- `RegisterAbortEvent<TPayload>(..., MatchExpression<TPayload> fatalMatch, ...)`
+
+The internal abort registration still stores a typed subscribe callback so the
+pending invoke path remains AOT-safe and does not reflect over payload shapes.
 
 Relevant C# references:
 
-- `playground/src/Eventa/InvokeExtensions.cs:34`
-- `playground/src/Eventa/Support/InvokeInternalConfig.cs:15`
-
-### Why this matters
-
-This narrows adapter integration options.
-
-- In TypeScript, an adapter can terminate pending invokes based on either a concrete fatal event or a pattern-based match.
-- In the current C# implementation, the public extension point requires a concrete event identity and cannot express pattern-based fatal-abort rules.
-
-### Recommended documentation note
-
-The C# docs should state that the current abort extension supports fatal events only, not fatal match expressions.
+- `playground/src/Eventa/InvokeExtensions.cs`
+- `playground/src/Eventa/Support/InvokeInternalConfig.cs`
+- `playground/tests/Eventa.Tests/InvokeExtensionsTests.cs`
 
 ## 4. Notes On What Is Not Listed Here
 
@@ -145,10 +123,7 @@ The following were intentionally not recorded as C#-specific differences:
 
 ## 5. Suggested Follow-Up
 
-If these differences should remain for now, add explicit XML remarks on the C# side at least in:
-
-- `playground/src/Eventa/EventInvoke.cs`
-- `playground/src/Eventa/Abstractions/IEventContext.cs`
-- `playground/src/Eventa/InvokeExtensions.cs`
-
-If they should not remain, the highest-impact implementation gap is the missing unary-invoke request-stream client surface.
+The `send-error` request-side protocol event is still not listed as a C#-specific
+difference for the reason above. If it becomes a documented first-class behavior
+surface in TypeScript or C#, track it separately from the resolved gaps in this
+file.

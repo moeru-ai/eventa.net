@@ -98,4 +98,30 @@ public interface IEventContext : IDisposable
     IDisposable Subscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler);
+
+    /// <summary>
+    /// Registers a listener that runs at most once for emitted events matching the expression.
+    /// </summary>
+    /// <typeparam name="TPayload">The payload type expected by the match expression.</typeparam>
+    /// <param name="matchExpression">The reusable matcher that selects envelopes to observe.</param>
+    /// <param name="handler">The callback that receives the first envelope matching the expression.</param>
+    /// <returns>
+    /// An <see cref="IDisposable"/> that removes this pending one-shot match listener when disposed.
+    /// </returns>
+    IDisposable SubscribeOnce<TPayload>(
+        MatchExpression<TPayload> matchExpression,
+        Action<EventEnvelope<TPayload>> handler);
+
+    /// <summary>
+    /// Removes one listener or all listeners associated with the specified match expression.
+    /// </summary>
+    /// <typeparam name="TPayload">The payload type expected by the match expression.</typeparam>
+    /// <param name="matchExpression">The reusable matcher whose listeners should be removed.</param>
+    /// <param name="handler">
+    /// The specific listener to remove. When <see langword="null"/>, all regular and one-shot
+    /// listeners for the match expression are removed.
+    /// </param>
+    void Unsubscribe<TPayload>(
+        MatchExpression<TPayload> matchExpression,
+        Action<EventEnvelope<TPayload>>? handler = null);
 }

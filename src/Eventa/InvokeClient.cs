@@ -34,10 +34,64 @@ public sealed class InvokeClient<TResponse, TRequest>
         TRequest request,
         CancellationToken cancellationToken = default)
     {
+        var context = _contextFactory();
+
         return new PendingInvokeOperation(
-            _contextFactory(),
+            context,
             _events,
-            request,
+            sendDispatchMode: SendDispatchMode.InlineAfterCancellationArmed,
+            (invokeId, requestCancellationToken) =>
+            {
+                if (requestCancellationToken.IsCancellationRequested)
+                {
+                    return Task.CompletedTask;
+                }
+
+                context.Emit(_events.Send, new SendPayload<TRequest>(invokeId, request));
+                return Task.CompletedTask;
+            },
+            cancellationToken).Run();
+    }
+
+    /// <summary>
+    /// Sends a request stream and awaits one terminal response for the bound invoke contract.
+    /// </summary>
+    /// <param name="request">The async sequence whose items should be forwarded as request payloads.</param>
+    /// <param name="cancellationToken">
+    /// A token that aborts the invoke locally and emits the protocol abort event when canceled.
+    /// </param>
+    /// <returns>A task that resolves to the handler response payload.</returns>
+    public Task<TResponse> InvokeAsync(
+        IAsyncEnumerable<TRequest> request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var context = _contextFactory();
+
+        return new PendingInvokeOperation(
+            context,
+            _events,
+            sendDispatchMode: SendDispatchMode.QueueOnThreadPool,
+            async (invokeId, requestCancellationToken) =>
+            {
+                if (requestCancellationToken.IsCancellationRequested) return;
+
+                try
+                {
+                    await foreach (var item in request.WithCancellation(requestCancellationToken).ConfigureAwait(false))
+                    {
+                        if (requestCancellationToken.IsCancellationRequested) return;
+
+                        context.Emit(_events.Send, new SendPayload<TRequest>(invokeId, item));
+                    }
+                }
+                catch (OperationCanceledException) when (requestCancellationToken.IsCancellationRequested) { return; }
+
+                if (requestCancellationToken.IsCancellationRequested) return;
+
+                context.Emit(_events.SendStreamEnd, new StreamEndPayload(invokeId));
+            },
             cancellationToken).Run();
     }
 
@@ -51,12 +105,16 @@ public sealed class InvokeClient<TResponse, TRequest>
     private sealed class PendingInvokeOperation(
         IEventContext context,
         InvokeEventBindings<TResponse, TRequest> events,
-        TRequest request,
+        SendDispatchMode sendDispatchMode,
+        Func<string, CancellationToken, Task> sendRequest,
         CancellationToken cancellationToken)
     {
         private readonly string _invokeId = IdGenerator.New();
         private readonly TaskCompletionSource<TResponse> _completion =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly CancellationTokenSource _requestCancellationSource = cancellationToken.CanBeCanceled
+            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+            : new CancellationTokenSource();
         private readonly List<IDisposable> _subscriptions = [];
         private int _finished;
 
@@ -79,7 +137,7 @@ public sealed class InvokeClient<TResponse, TRequest>
                 return _completion.Task;
             }
 
-            EmitRequest();
+            DispatchSendRequest();
             return _completion.Task;
         }
 
@@ -125,9 +183,9 @@ public sealed class InvokeClient<TResponse, TRequest>
         }
 
         /// <summary>
-        /// Emits the invoke request after subscriptions and client cancellation are fully armed.
+        /// Starts request dispatch inline or on the thread pool according to the configured mode.
         /// </summary>
-        private void EmitRequest()
+        private void DispatchSendRequest()
         {
             // Fatal events can finish the invoke after subscriptions are armed but before send.
             if (Volatile.Read(ref _finished) != 0) return;
@@ -139,7 +197,29 @@ public sealed class InvokeClient<TResponse, TRequest>
                 return;
             }
 
-            context.Emit(events.Send, new SendPayload<TRequest>(_invokeId, request));
+            if (sendDispatchMode is SendDispatchMode.InlineAfterCancellationArmed)
+            {
+                ExecuteSendRequestAsync().GetAwaiter().GetResult();
+                return;
+            }
+
+            _ = Task.Run(ExecuteSendRequestAsync, CancellationToken.None);
+        }
+
+        /// <summary>
+        /// Executes the request-dispatch callback and converts send failures into terminal faults.
+        /// </summary>
+        private async Task ExecuteSendRequestAsync()
+        {
+            try
+            {
+                await sendRequest(_invokeId, _requestCancellationSource.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (_requestCancellationSource.Token.IsCancellationRequested) { return; }
+            catch (Exception error)
+            {
+                CompleteFaulted(error);
+            }
         }
 
         /// <summary>
@@ -193,6 +273,8 @@ public sealed class InvokeClient<TResponse, TRequest>
         {
             if (Interlocked.Exchange(ref _finished, 1) != 0) return;
 
+            _requestCancellationSource.Cancel();
+
             if (emitAbort)
             {
                 context.Emit(events.SendAbort, new AbortPayload(_invokeId));
@@ -200,6 +282,7 @@ public sealed class InvokeClient<TResponse, TRequest>
 
             complete();
             Cleanup();
+            _requestCancellationSource.Dispose();
         }
 
         /// <summary>
@@ -238,5 +321,21 @@ public sealed class InvokeClient<TResponse, TRequest>
         {
             return new InvalidOperationException("Pending invoke aborted by fatal event.");
         }
+    }
+
+    /// <summary>
+    /// Controls whether request dispatch runs inline or is queued to the thread pool.
+    /// </summary>
+    private enum SendDispatchMode
+    {
+        /// <summary>
+        /// Dispatches the request inline once cancellation is armed to avoid queued-send races.
+        /// </summary>
+        InlineAfterCancellationArmed,
+
+        /// <summary>
+        /// Queues request pumping to the thread pool, which is suitable for streamed request sources.
+        /// </summary>
+        QueueOnThreadPool,
     }
 }

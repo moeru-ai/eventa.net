@@ -293,6 +293,117 @@ public class InvokeTests
     }
 
     [Fact]
+    public async Task InvokeAsync_WithRequestStream_ReturnsUnaryResponse()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("sum-client-stream");
+        var received = new List<int>();
+
+        using var _ = context.RegisterInvokeHandler(definition,
+            async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
+            {
+                var sum = 0;
+                await foreach (var value in request.WithCancellation(cancellationToken))
+                {
+                    received.Add(value);
+                    sum += value;
+                }
+
+                return sum;
+            });
+
+        var client = context.CreateInvokeClient(definition);
+        var result = await client.InvokeAsync(Numbers(1, 2, 3), CancellationToken.None);
+
+        Assert.Equal([1, 2, 3], received);
+        Assert.Equal(6, result);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WithEmptyRequestStream_ReturnsUnaryResponse()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("sum-empty-client-stream");
+        var received = new List<int>();
+
+        using var _ = context.RegisterInvokeHandler(definition,
+            async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
+            {
+                var sum = 0;
+                await foreach (var value in request.WithCancellation(cancellationToken))
+                {
+                    received.Add(value);
+                    sum += value;
+                }
+
+                return sum;
+            });
+
+        var client = context.CreateInvokeClient(definition);
+        var result = await client.InvokeAsync(Numbers(), CancellationToken.None);
+
+        Assert.Empty(received);
+        Assert.Equal(0, result);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WithRequestStreamAndPreCanceledToken_DoesNotEnumerateRequest()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("sum-client-stream-precanceled");
+        var sendEvent = new EventDefinition<SendPayload<int>>(definition.SendEventId);
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var requestEnumerationCount = 0;
+        var sendCount = 0;
+        var abortCount = 0;
+
+        async IAsyncEnumerable<int> Requests()
+        {
+            requestEnumerationCount++;
+            await Task.Yield();
+            yield return 1;
+        }
+
+        using var _ = context.Subscribe(sendEvent, _ => sendCount++);
+        using var __ = context.Subscribe(sendAbortEvent, _ => abortCount++);
+        using var cancellationSource = new CancellationTokenSource();
+        await cancellationSource.CancelAsync();
+
+        var client = context.CreateInvokeClient(definition);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => client.InvokeAsync(Requests(), cancellationSource.Token));
+
+        Assert.Equal(0, requestEnumerationCount);
+        Assert.Equal(0, sendCount);
+        Assert.Equal(1, abortCount);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WithRequestStream_PropagatesHandlerError()
+    {
+        var context = new EventContext();
+        var definition = new InvokeEventDefinition<int, int>("sum-client-stream-error");
+        var expected = new InvalidOperationException("stream handler failed");
+
+        using var _ = context.RegisterInvokeHandler(definition,
+            async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
+            {
+                await foreach (var _ in request.WithCancellation(cancellationToken))
+                {
+                }
+
+                throw expected;
+            });
+
+        var client = context.CreateInvokeClient(definition);
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.InvokeAsync(Numbers(1), CancellationToken.None));
+
+        Assert.Same(expected, actual);
+    }
+
+    [Fact]
     public async Task RegisterInvokeHandler_AcceptsRequestStreamProtocolMessages()
     {
         var context = new EventContext();
@@ -546,6 +657,15 @@ public class InvokeTests
 
     private sealed record UserResponse(string Id);
 
+    private static async IAsyncEnumerable<int> Numbers(params int[] values)
+    {
+        foreach (var value in values)
+        {
+            await Task.Yield();
+            yield return value;
+        }
+    }
+
     private sealed class FatalEventDuringSubscriptionContext(string fatalEventId, Exception fatalError) : IEventContext
     {
         private readonly EventContext _inner = new();
@@ -608,6 +728,20 @@ public class InvokeTests
             Action<EventEnvelope<TPayload>> handler)
         {
             return _inner.Subscribe(matchExpression, handler);
+        }
+
+        public IDisposable SubscribeOnce<TPayload>(
+            MatchExpression<TPayload> matchExpression,
+            Action<EventEnvelope<TPayload>> handler)
+        {
+            return _inner.SubscribeOnce(matchExpression, handler);
+        }
+
+        public void Unsubscribe<TPayload>(
+            MatchExpression<TPayload> matchExpression,
+            Action<EventEnvelope<TPayload>>? handler = null)
+        {
+            _inner.Unsubscribe(matchExpression, handler);
         }
 
         public void Dispose()
@@ -719,6 +853,20 @@ public class InvokeTests
         public IDisposable Subscribe<TPayload>(
             MatchExpression<TPayload> matchExpression,
             Action<EventEnvelope<TPayload>> handler)
+        {
+            throw new NotSupportedException();
+        }
+
+        public IDisposable SubscribeOnce<TPayload>(
+            MatchExpression<TPayload> matchExpression,
+            Action<EventEnvelope<TPayload>> handler)
+        {
+            throw new NotSupportedException();
+        }
+
+        public void Unsubscribe<TPayload>(
+            MatchExpression<TPayload> matchExpression,
+            Action<EventEnvelope<TPayload>>? handler = null)
         {
             throw new NotSupportedException();
         }

@@ -14,22 +14,21 @@ Status labels:
 Status: `covered` + `extra`
 Current C# target: `EventContextTests.cs`
 
-- Covers `Subscribe`+`Emit`, same handler only once, `SubscribeOnce` listeners, `Unsubscribe(event)`, returned disposer, `Unsubscribe(event, handler)`, and returned disposer for a specific listener.
-- Extra C# contract: `MatchExpression` subscriptions are integrated into `EventContext` dispatch and only receive matching payloads.
+- Covers `Subscribe`+`Emit`, same handler only once, `SubscribeOnce` listeners, `Unsubscribe(event)`, returned disposer, `Unsubscribe(event, handler)`, returned disposer for a specific listener, and match-expression `SubscribeOnce` / `Unsubscribe(matchExpression)` / `Unsubscribe(matchExpression, handler)` semantics.
+- Extra C# contract: `MatchExpression` subscriptions are integrated into `EventContext` dispatch, only receive matching payloads, and support one-shot, bulk-unsubscribe, and handler-specific unsubscribe behavior.
 - Extra C# contract: adapter-aware contexts surface local and match-expression dispatches through `IEventaAdapter.OnReceived` using `EventEnvelope<TPayload>` values, preserve the original event id in `envelope.EventId` even when `eventId` is a match-expression id, call `OnSent` only after local processing completes, and skip `OnSent` entirely if a local listener throws.
-- Extra C# contract: the default `EventContext` fails fast if one `EventDefinition.Id` or `MatchExpression.Id` is reused with a different payload type inside the same context; first use via `Subscribe`, `SubscribeOnce`, or either `Emit` overload establishes that binding, `Unsubscribe(event)` does not release it, and only a different `EventContext` can rebind the same identifier.
+- Extra C# contract: the default `EventContext` fails fast if one `EventDefinition.Id` or `MatchExpression.Id` is reused with a different payload type inside the same context; first use via `Subscribe`, `SubscribeOnce`, or either `Emit` overload establishes that binding, `Unsubscribe(event)` and `Unsubscribe(matchExpression)` do not release it, and only a different `EventContext` can rebind the same identifier.
 
 ### `invoke.spec.ts`
 
-Status: `covered` + `adapted` + `deferred` + `extra`
+Status: `covered` + `deferred` + `extra`
 Current C# target: `InvokeTests.cs`
 
-- Covered: request-response, sync lazy context, request-derived error message, exact error instance propagation, abort/cancel with handler notification, concurrent invokes, same handler once, returned handler removal.
-- Adapted: request-stream input and request-stream abort are currently covered at the protocol/handler layer because C# has no public client invoke overload for request streams.
-- Extra C# contract within that adapted coverage: empty request streams are accepted by materializing handler state on `sendStreamEndEvent`, and pre-first-item abort still notifies the handler.
-- Extra C# contract outside doc 2.2: a pre-canceled client token emits a single abort without sending the request, fatal-event completion can also win before request emit so the invoke faults without sending the request, and late cancellation after the response wins the race does not emit a redundant abort.
+- Covered: request-response, sync lazy context, unary invoke request-stream input, request-derived error message, exact error instance propagation, abort/cancel with handler notification, concurrent invokes, same handler once, returned handler removal.
+- Extra C# contract: unary request-stream invokes accept empty request streams, pre-canceled request streams do not enumerate the outbound source and emit a single abort, and handler failures raised while consuming streamed requests propagate with the exact exception instance.
+- Extra C# contract outside doc 2.2: a pre-canceled unary client token emits a single abort without sending the request, fatal-event completion can also win before request emit so the invoke faults without sending the request, and late cancellation after the response wins the race does not emit a redundant abort.
 - Parity note: current TypeScript `invoke.ts` also materializes unknown `invokeId` values on `sendEventStreamEnd` and `sendEventAbort` for request-stream handlers.
-- Deferred: async lazy context, `undefineInvokeHandler()` (specific + all handlers), batch registration, public client-side request stream invoke parity.
+- Deferred: async lazy context, `undefineInvokeHandler()` (specific + all handlers), batch registration.
 
 ### `stream.spec.ts`
 
@@ -65,7 +64,7 @@ Current C# target: none
 Status: `covered` + `adapted` + `extra`
 Current C# target: `InvokeExtensionsTests.cs`, `InvokeTests.cs`
 
-- Covered: pending invokes are rejected when the fatal event fires, including the case where the fatal event completes the invoke before the client request is emitted.
+- Covered: pending invokes are rejected when the fatal event or registered fatal match expression fires, including the case where the fatal event completes the invoke before the client request is emitted.
 - Adapted: the TS `{ error }` payload pattern maps to C# via `RegisterAbortEvent<TPayload>(..., mapError)`, which can preserve the exact exception instance from a typed fatal-event payload.
 - Extra C# contract: if the fatal event fires reentrantly while its subscription is still being attached, the pending invoke still disposes that fatal-event subscription exactly once.
 - Extra C# contract: `RegisterAbortEvent(EventDefinition<object>)` also preserves the exact exception instance when the fatal-event payload is itself an `Exception`.

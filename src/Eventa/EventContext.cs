@@ -114,6 +114,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         var listeners = new List<Action<EventEnvelope<TPayload>>>();
         var onceListeners = new List<Action<EventEnvelope<TPayload>>>();
         var matchedListeners = new List<(string MatchExpressionId, Action<EventEnvelope<TPayload>> Handler)>();
+        var matchedOnceListeners = new List<(string MatchExpressionId, Action<EventEnvelope<TPayload>> Handler)>();
+        var emptyMatchRegistrations = new List<string>();
 
         lock (_sync)
         {
@@ -136,6 +138,22 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
                 {
                     matchedListeners.Add((registration.Id, handler));
                 }
+
+                foreach (var handler in registration.OnceListeners.Cast<Action<EventEnvelope<TPayload>>>())
+                {
+                    matchedOnceListeners.Add((registration.Id, handler));
+                }
+
+                registration.OnceListeners.Clear();
+                if (registration.IsEmpty)
+                {
+                    emptyMatchRegistrations.Add(registration.Id);
+                }
+            }
+
+            foreach (var matchExpressionId in emptyMatchRegistrations)
+            {
+                _matchListeners.Remove(matchExpressionId);
             }
         }
 
@@ -152,6 +170,12 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         }
 
         foreach (var (matchExpressionId, handler) in matchedListeners)
+        {
+            handler(envelope);
+            Adapter?.OnReceived(matchExpressionId, envelope);
+        }
+
+        foreach (var (matchExpressionId, handler) in matchedOnceListeners)
         {
             handler(envelope);
             Adapter?.OnReceived(matchExpressionId, envelope);
@@ -194,7 +218,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
             registeredListeners.Add(handler);
         }
 
-        return new ActionDisposable(() => RemoveListener(eventDefinition.Id, handler, removeOnceListeners: false));
+        return new ActionDisposable(() =>
+            RemoveDirectListenerFromRegistry(eventDefinition.Id, handler, DirectListenerRegistryKind.Regular));
     }
 
     /// <summary>
@@ -235,7 +260,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
             registeredListeners.Add(handler);
         }
 
-        return new ActionDisposable(() => RemoveListener(eventDefinition.Id, handler, removeOnceListeners: true));
+        return new ActionDisposable(() =>
+            RemoveDirectListenerFromRegistry(eventDefinition.Id, handler, DirectListenerRegistryKind.Once));
     }
 
     /// <summary>
@@ -268,8 +294,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
                 return;
             }
 
-            RemoveListenerCore(eventDefinition.Id, handler, _listeners);
-            RemoveListenerCore(eventDefinition.Id, handler, _onceListeners);
+            RemoveDirectListenerFromRegistry(eventDefinition.Id, handler, DirectListenerRegistryKind.All);
         }
     }
 
@@ -300,16 +325,90 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
 
             if (!_matchListeners.TryGetValue(matchExpression.Id, out var registration))
             {
-                registration = new MatchListenerRegistration(
-                    matchExpression.Id,
-                    envelope => envelope is EventEnvelope<TPayload> typedEnvelope && matchExpression.Matcher(typedEnvelope));
+                registration = CreateMatchListenerRegistration(matchExpression);
                 _matchListeners[matchExpression.Id] = registration;
             }
 
             registration.Listeners.Add(handler);
         }
 
-        return new ActionDisposable(() => RemoveMatchListener(matchExpression.Id, handler));
+        return new ActionDisposable(() =>
+            RemoveMatchListenerFromBuckets(matchExpression.Id, handler, MatchListenerBucketKind.Regular));
+    }
+
+    /// <summary>
+    /// Registers a listener that runs at most once for emitted events matching the expression.
+    /// </summary>
+    /// <typeparam name="TPayload">The payload type expected by the match expression.</typeparam>
+    /// <param name="matchExpression">The reusable matcher that selects envelopes to observe.</param>
+    /// <param name="handler">The callback that receives the first envelope matching the expression.</param>
+    /// <returns>
+    /// An <see cref="IDisposable"/> that removes this pending one-shot match listener when disposed.
+    /// </returns>
+    /// <remarks>
+    /// The listener is removed before callbacks are invoked, so re-entrant emits do not run the
+    /// same one-shot match handler twice.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when this context has already associated <paramref name="matchExpression"/> with a
+    /// different payload type.
+    /// </exception>
+    public IDisposable SubscribeOnce<TPayload>(
+        MatchExpression<TPayload> matchExpression,
+        Action<EventEnvelope<TPayload>> handler)
+    {
+        ArgumentNullException.ThrowIfNull(matchExpression);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        lock (_sync)
+        {
+            CheckMatchExpressionPayloadTypeBinding(matchExpression);
+            BindMatchExpressionPayloadType(matchExpression);
+
+            if (!_matchListeners.TryGetValue(matchExpression.Id, out var registration))
+            {
+                registration = CreateMatchListenerRegistration(matchExpression);
+                _matchListeners[matchExpression.Id] = registration;
+            }
+
+            registration.OnceListeners.Add(handler);
+        }
+
+        return new ActionDisposable(() =>
+            RemoveMatchListenerFromBuckets(matchExpression.Id, handler, MatchListenerBucketKind.Once));
+    }
+
+    /// <summary>
+    /// Removes one listener or all listeners associated with the specified match expression.
+    /// </summary>
+    /// <typeparam name="TPayload">The payload type expected by the match expression.</typeparam>
+    /// <param name="matchExpression">The reusable matcher whose listeners should be removed.</param>
+    /// <param name="handler">
+    /// The specific listener to remove. When <see langword="null"/>, all regular and one-shot
+    /// listeners for the match expression are removed.
+    /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when this context has already associated <paramref name="matchExpression"/> with a
+    /// different payload type.
+    /// </exception>
+    public void Unsubscribe<TPayload>(
+        MatchExpression<TPayload> matchExpression,
+        Action<EventEnvelope<TPayload>>? handler = null)
+    {
+        ArgumentNullException.ThrowIfNull(matchExpression);
+
+        lock (_sync)
+        {
+            CheckMatchExpressionPayloadTypeBinding(matchExpression);
+
+            if (handler is null)
+            {
+                _matchListeners.Remove(matchExpression.Id);
+                return;
+            }
+
+            RemoveMatchListenerFromBuckets(matchExpression.Id, handler, MatchListenerBucketKind.All);
+        }
     }
 
     /// <summary>
@@ -330,64 +429,101 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
     }
 
     /// <summary>
-    /// Removes one direct listener from either the regular or one-shot registry.
+    /// Removes one direct listener from the selected direct-listener registry or registries.
     /// </summary>
-    /// <param name="eventId">The event identifier that owns the listener.</param>
+    /// <param name="eventId">The event identifier that keys the registry bucket.</param>
     /// <param name="handler">The delegate instance to remove.</param>
-    /// <param name="removeOnceListeners">
-    /// <see langword="true"/> to remove from one-shot listeners; otherwise remove from regular listeners.
-    /// </param>
-    private void RemoveListener(string eventId, Delegate handler, bool removeOnceListeners)
+    /// <param name="registryKind">The direct-listener registry selection that should be mutated.</param>
+    private void RemoveDirectListenerFromRegistry(
+        string eventId,
+        Delegate handler,
+        DirectListenerRegistryKind registryKind)
     {
         lock (_sync)
         {
-            if (removeOnceListeners)
+            void RemoveFrom(Dictionary<string, HashSet<Delegate>> registry)
             {
-                RemoveListenerCore(eventId, handler, _onceListeners);
-                return;
+                if (!registry.TryGetValue(eventId, out var listeners)) return;
+
+                listeners.Remove(handler);
+                if (listeners.Count == 0)
+                {
+                    registry.Remove(eventId);
+                }
             }
 
-            RemoveListenerCore(eventId, handler, _listeners);
+            var (removeRegular, removeOnce) = registryKind switch
+            {
+                DirectListenerRegistryKind.Regular => (true, false),
+                DirectListenerRegistryKind.Once => (false, true),
+                DirectListenerRegistryKind.All => (true, true),
+                _ => throw new ArgumentOutOfRangeException(nameof(registryKind), registryKind, null),
+            };
+
+            if (removeRegular)
+            {
+                RemoveFrom(_listeners);
+            }
+
+            if (removeOnce)
+            {
+                RemoveFrom(_onceListeners);
+            }
         }
     }
 
+    private enum DirectListenerRegistryKind
+    {
+        Regular,
+        Once,
+        All,
+    }
+
     /// <summary>
-    /// Removes one listener from a match-expression registration and drops the registration when empty.
+    /// Removes one match listener from the selected match-listener bucket or buckets.
     /// </summary>
     /// <param name="matchExpressionId">The match expression identifier that owns the listener.</param>
     /// <param name="handler">The delegate instance to remove.</param>
-    private void RemoveMatchListener(string matchExpressionId, Delegate handler)
+    /// <param name="bucketKind">The match-listener bucket selection that should be mutated.</param>
+    private void RemoveMatchListenerFromBuckets(
+        string matchExpressionId,
+        Delegate handler,
+        MatchListenerBucketKind bucketKind)
     {
         lock (_sync)
         {
             if (!_matchListeners.TryGetValue(matchExpressionId, out var registration)) return;
 
-            registration.Listeners.Remove(handler);
-            if (registration.Listeners.Count == 0)
+            var (removeRegular, removeOnce) = bucketKind switch
+            {
+                MatchListenerBucketKind.Regular => (true, false),
+                MatchListenerBucketKind.Once => (false, true),
+                MatchListenerBucketKind.All => (true, true),
+                _ => throw new ArgumentOutOfRangeException(nameof(bucketKind), bucketKind, null),
+            };
+
+            if (removeRegular)
+            {
+                registration.Listeners.Remove(handler);
+            }
+
+            if (removeOnce)
+            {
+                registration.OnceListeners.Remove(handler);
+            }
+
+            if (registration.IsEmpty)
             {
                 _matchListeners.Remove(matchExpressionId);
             }
         }
     }
 
-    /// <summary>
-    /// Removes one delegate from the supplied listener registry and deletes empty buckets.
-    /// </summary>
-    /// <param name="eventId">The event identifier that keys the registry bucket.</param>
-    /// <param name="handler">The delegate instance to remove.</param>
-    /// <param name="registry">The listener registry to mutate.</param>
-    private static void RemoveListenerCore(
-        string eventId,
-        Delegate handler,
-        IDictionary<string, HashSet<Delegate>> registry)
+    private enum MatchListenerBucketKind
     {
-        if (!registry.TryGetValue(eventId, out var listeners)) return;
-
-        listeners.Remove(handler);
-        if (listeners.Count == 0)
-        {
-            registry.Remove(eventId);
-        }
+        Regular,
+        Once,
+        All,
     }
 
     /// <summary>
@@ -463,6 +599,19 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
             matchExpression.Id,
             typeof(TPayload),
             operation);
+    }
+
+    /// <summary>
+    /// Creates the stored listener bucket for a typed match expression.
+    /// </summary>
+    /// <typeparam name="TPayload">The payload type expected by the match expression.</typeparam>
+    /// <param name="matchExpression">The match expression used to select emitted envelopes.</param>
+    private static MatchListenerRegistration CreateMatchListenerRegistration<TPayload>(
+        MatchExpression<TPayload> matchExpression)
+    {
+        return new MatchListenerRegistration(
+            matchExpression.Id,
+            envelope => envelope is EventEnvelope<TPayload> typedEnvelope && matchExpression.Matcher(typedEnvelope));
     }
 
     /// <summary>
@@ -547,5 +696,15 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         /// Gets the listeners currently subscribed to this match expression.
         /// </summary>
         public HashSet<Delegate> Listeners { get; } = [];
+
+        /// <summary>
+        /// Gets the one-shot listeners currently subscribed to this match expression.
+        /// </summary>
+        public HashSet<Delegate> OnceListeners { get; } = [];
+
+        /// <summary>
+        /// Gets whether no regular or one-shot listeners remain in this registration.
+        /// </summary>
+        public bool IsEmpty => Listeners.Count == 0 && OnceListeners.Count == 0;
     }
 }
