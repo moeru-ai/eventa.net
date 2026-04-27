@@ -11,7 +11,14 @@ namespace Eventa;
 /// </summary>
 internal sealed class AsyncSignalQueue<T>
 {
-    private readonly Channel<T> _channel = Channel.CreateUnbounded<T>();
+    private static readonly UnboundedChannelOptions ChannelOptions = new()
+    {
+        SingleReader = false,
+        SingleWriter = false,
+        AllowSynchronousContinuations = false,
+    };
+
+    private readonly Channel<T> _channel = Channel.CreateUnbounded<T>(ChannelOptions);
 
     /// <summary>
     /// Attempts to enqueue a value.

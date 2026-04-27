@@ -1,5 +1,3 @@
-using System.Runtime.CompilerServices;
-
 namespace Eventa;
 
 /// <summary>
@@ -18,12 +16,7 @@ namespace Eventa;
 /// </remarks>
 public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
 {
-    private readonly Lock _sync = new();
-    private readonly Dictionary<string, HashSet<Delegate>> _listeners = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, HashSet<Delegate>> _onceListeners = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Type> _eventPayloadTypes = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, MatchListenerRegistration> _matchListeners = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Type> _matchExpressionPayloadTypes = new(StringComparer.Ordinal);
+    private readonly EventListenerStore _listeners = new();
 
     /// <summary>
     /// Gets the mutable extension bag associated with this context.
@@ -63,14 +56,6 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
     /// </exception>
     public void Emit<TPayload>(EventDefinition<TPayload> eventDefinition, TPayload payload)
     {
-        ArgumentNullException.ThrowIfNull(eventDefinition);
-
-        lock (_sync)
-        {
-            CheckEventPayloadTypeBinding(eventDefinition);
-            BindEventPayloadType(eventDefinition);
-        }
-
         EmitCore(eventDefinition, payload, options: null);
     }
 
@@ -92,14 +77,6 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         TOptions options)
         where TOptions : class
     {
-        ArgumentNullException.ThrowIfNull(eventDefinition);
-
-        lock (_sync)
-        {
-            CheckEventPayloadTypeBinding(eventDefinition);
-            BindEventPayloadType(eventDefinition);
-        }
-
         EmitCore(eventDefinition, payload, options);
     }
 
@@ -108,80 +85,33 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         TPayload payload,
         object? options)
     {
-        ArgumentNullException.ThrowIfNull(eventDefinition);
+        var dispatch = _listeners.CreateDispatchSnapshot(eventDefinition, payload, nameof(Emit));
 
-        var envelope = new EventEnvelope<TPayload>(eventDefinition.Id, payload);
-        var listeners = new List<Action<EventEnvelope<TPayload>>>();
-        var onceListeners = new List<Action<EventEnvelope<TPayload>>>();
-        var matchedListeners = new List<(string MatchExpressionId, Action<EventEnvelope<TPayload>> Handler)>();
-        var matchedOnceListeners = new List<(string MatchExpressionId, Action<EventEnvelope<TPayload>> Handler)>();
-        var emptyMatchRegistrations = new List<string>();
-
-        lock (_sync)
+        foreach (var handler in dispatch.Listeners)
         {
-            if (_listeners.TryGetValue(eventDefinition.Id, out var registeredListeners))
-            {
-                listeners.AddRange(registeredListeners.Cast<Action<EventEnvelope<TPayload>>>());
-            }
-
-            if (_onceListeners.TryGetValue(eventDefinition.Id, out var registeredOnceListeners))
-            {
-                onceListeners.AddRange(registeredOnceListeners.Cast<Action<EventEnvelope<TPayload>>>());
-                _onceListeners.Remove(eventDefinition.Id);
-            }
-
-            foreach (var registration in _matchListeners.Values)
-            {
-                if (!registration.Matcher(envelope)) { continue; }
-
-                foreach (var handler in registration.Listeners.Cast<Action<EventEnvelope<TPayload>>>())
-                {
-                    matchedListeners.Add((registration.Id, handler));
-                }
-
-                foreach (var handler in registration.OnceListeners.Cast<Action<EventEnvelope<TPayload>>>())
-                {
-                    matchedOnceListeners.Add((registration.Id, handler));
-                }
-
-                registration.OnceListeners.Clear();
-                if (registration.IsEmpty)
-                {
-                    emptyMatchRegistrations.Add(registration.Id);
-                }
-            }
-
-            foreach (var matchExpressionId in emptyMatchRegistrations)
-            {
-                _matchListeners.Remove(matchExpressionId);
-            }
+            handler(dispatch.Envelope);
+            Adapter?.OnReceived(eventDefinition.Id, dispatch.Envelope);
         }
 
-        foreach (var handler in listeners)
+        foreach (var handler in dispatch.OnceListeners)
         {
-            handler(envelope);
-            Adapter?.OnReceived(eventDefinition.Id, envelope);
+            handler(dispatch.Envelope);
+            Adapter?.OnReceived(eventDefinition.Id, dispatch.Envelope);
         }
 
-        foreach (var handler in onceListeners)
+        foreach (var matchedListener in dispatch.MatchedListeners)
         {
-            handler(envelope);
-            Adapter?.OnReceived(eventDefinition.Id, envelope);
+            matchedListener.Handler(dispatch.Envelope);
+            Adapter?.OnReceived(matchedListener.MatchExpressionId, dispatch.Envelope);
         }
 
-        foreach (var (matchExpressionId, handler) in matchedListeners)
+        foreach (var matchedListener in dispatch.MatchedOnceListeners)
         {
-            handler(envelope);
-            Adapter?.OnReceived(matchExpressionId, envelope);
+            matchedListener.Handler(dispatch.Envelope);
+            Adapter?.OnReceived(matchedListener.MatchExpressionId, dispatch.Envelope);
         }
 
-        foreach (var (matchExpressionId, handler) in matchedOnceListeners)
-        {
-            handler(envelope);
-            Adapter?.OnReceived(matchExpressionId, envelope);
-        }
-
-        Adapter?.OnSent(eventDefinition.Id, envelope, options);
+        Adapter?.OnSent(eventDefinition.Id, dispatch.Envelope, options);
     }
 
     /// <summary>
@@ -201,25 +131,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler)
     {
-        ArgumentNullException.ThrowIfNull(eventDefinition);
-        ArgumentNullException.ThrowIfNull(handler);
-
-        lock (_sync)
-        {
-            CheckEventPayloadTypeBinding(eventDefinition);
-            BindEventPayloadType(eventDefinition);
-
-            if (!_listeners.TryGetValue(eventDefinition.Id, out var registeredListeners))
-            {
-                registeredListeners = [];
-                _listeners[eventDefinition.Id] = registeredListeners;
-            }
-
-            registeredListeners.Add(handler);
-        }
-
-        return new ActionDisposable(() =>
-            RemoveDirectListenerFromRegistry(eventDefinition.Id, handler, DirectListenerRegistryKind.Regular));
+        return _listeners.Subscribe(eventDefinition, handler, EventListenerLifetime.Regular, nameof(Subscribe));
     }
 
     /// <summary>
@@ -243,25 +155,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler)
     {
-        ArgumentNullException.ThrowIfNull(eventDefinition);
-        ArgumentNullException.ThrowIfNull(handler);
-
-        lock (_sync)
-        {
-            CheckEventPayloadTypeBinding(eventDefinition);
-            BindEventPayloadType(eventDefinition);
-
-            if (!_onceListeners.TryGetValue(eventDefinition.Id, out var registeredListeners))
-            {
-                registeredListeners = [];
-                _onceListeners[eventDefinition.Id] = registeredListeners;
-            }
-
-            registeredListeners.Add(handler);
-        }
-
-        return new ActionDisposable(() =>
-            RemoveDirectListenerFromRegistry(eventDefinition.Id, handler, DirectListenerRegistryKind.Once));
+        return _listeners.Subscribe(eventDefinition, handler, EventListenerLifetime.Once, nameof(SubscribeOnce));
     }
 
     /// <summary>
@@ -281,21 +175,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>>? handler = null)
     {
-        ArgumentNullException.ThrowIfNull(eventDefinition);
-
-        lock (_sync)
-        {
-            CheckEventPayloadTypeBinding(eventDefinition);
-
-            if (handler is null)
-            {
-                _listeners.Remove(eventDefinition.Id);
-                _onceListeners.Remove(eventDefinition.Id);
-                return;
-            }
-
-            RemoveDirectListenerFromRegistry(eventDefinition.Id, handler, DirectListenerRegistryKind.All);
-        }
+        _listeners.Unsubscribe(eventDefinition, handler, nameof(Unsubscribe));
     }
 
     /// <summary>
@@ -315,25 +195,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler)
     {
-        ArgumentNullException.ThrowIfNull(matchExpression);
-        ArgumentNullException.ThrowIfNull(handler);
-
-        lock (_sync)
-        {
-            CheckMatchExpressionPayloadTypeBinding(matchExpression);
-            BindMatchExpressionPayloadType(matchExpression);
-
-            if (!_matchListeners.TryGetValue(matchExpression.Id, out var registration))
-            {
-                registration = CreateMatchListenerRegistration(matchExpression);
-                _matchListeners[matchExpression.Id] = registration;
-            }
-
-            registration.Listeners.Add(handler);
-        }
-
-        return new ActionDisposable(() =>
-            RemoveMatchListenerFromBuckets(matchExpression.Id, handler, MatchListenerBucketKind.Regular));
+        return _listeners.Subscribe(matchExpression, handler, EventListenerLifetime.Regular, nameof(Subscribe));
     }
 
     /// <summary>
@@ -357,25 +219,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler)
     {
-        ArgumentNullException.ThrowIfNull(matchExpression);
-        ArgumentNullException.ThrowIfNull(handler);
-
-        lock (_sync)
-        {
-            CheckMatchExpressionPayloadTypeBinding(matchExpression);
-            BindMatchExpressionPayloadType(matchExpression);
-
-            if (!_matchListeners.TryGetValue(matchExpression.Id, out var registration))
-            {
-                registration = CreateMatchListenerRegistration(matchExpression);
-                _matchListeners[matchExpression.Id] = registration;
-            }
-
-            registration.OnceListeners.Add(handler);
-        }
-
-        return new ActionDisposable(() =>
-            RemoveMatchListenerFromBuckets(matchExpression.Id, handler, MatchListenerBucketKind.Once));
+        return _listeners.Subscribe(matchExpression, handler, EventListenerLifetime.Once, nameof(SubscribeOnce));
     }
 
     /// <summary>
@@ -395,20 +239,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>>? handler = null)
     {
-        ArgumentNullException.ThrowIfNull(matchExpression);
-
-        lock (_sync)
-        {
-            CheckMatchExpressionPayloadTypeBinding(matchExpression);
-
-            if (handler is null)
-            {
-                _matchListeners.Remove(matchExpression.Id);
-                return;
-            }
-
-            RemoveMatchListenerFromBuckets(matchExpression.Id, handler, MatchListenerBucketKind.All);
-        }
+        _listeners.Unsubscribe(matchExpression, handler, nameof(Unsubscribe));
     }
 
     /// <summary>
@@ -416,295 +247,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
     /// </summary>
     public void Dispose()
     {
-        lock (_sync)
-        {
-            _listeners.Clear();
-            _onceListeners.Clear();
-            _eventPayloadTypes.Clear();
-            _matchListeners.Clear();
-            _matchExpressionPayloadTypes.Clear();
-        }
+        _listeners.Clear();
 
         Adapter?.Dispose();
-    }
-
-    /// <summary>
-    /// Removes one direct listener from the selected direct-listener registry or registries.
-    /// </summary>
-    /// <param name="eventId">The event identifier that keys the registry bucket.</param>
-    /// <param name="handler">The delegate instance to remove.</param>
-    /// <param name="registryKind">The direct-listener registry selection that should be mutated.</param>
-    private void RemoveDirectListenerFromRegistry(
-        string eventId,
-        Delegate handler,
-        DirectListenerRegistryKind registryKind)
-    {
-        lock (_sync)
-        {
-            void RemoveFrom(Dictionary<string, HashSet<Delegate>> registry)
-            {
-                if (!registry.TryGetValue(eventId, out var listeners)) return;
-
-                listeners.Remove(handler);
-                if (listeners.Count == 0)
-                {
-                    registry.Remove(eventId);
-                }
-            }
-
-            var (removeRegular, removeOnce) = registryKind switch
-            {
-                DirectListenerRegistryKind.Regular => (true, false),
-                DirectListenerRegistryKind.Once => (false, true),
-                DirectListenerRegistryKind.All => (true, true),
-                _ => throw new ArgumentOutOfRangeException(nameof(registryKind), registryKind, null),
-            };
-
-            if (removeRegular)
-            {
-                RemoveFrom(_listeners);
-            }
-
-            if (removeOnce)
-            {
-                RemoveFrom(_onceListeners);
-            }
-        }
-    }
-
-    private enum DirectListenerRegistryKind
-    {
-        Regular,
-        Once,
-        All,
-    }
-
-    /// <summary>
-    /// Removes one match listener from the selected match-listener bucket or buckets.
-    /// </summary>
-    /// <param name="matchExpressionId">The match expression identifier that owns the listener.</param>
-    /// <param name="handler">The delegate instance to remove.</param>
-    /// <param name="bucketKind">The match-listener bucket selection that should be mutated.</param>
-    private void RemoveMatchListenerFromBuckets(
-        string matchExpressionId,
-        Delegate handler,
-        MatchListenerBucketKind bucketKind)
-    {
-        lock (_sync)
-        {
-            if (!_matchListeners.TryGetValue(matchExpressionId, out var registration)) return;
-
-            var (removeRegular, removeOnce) = bucketKind switch
-            {
-                MatchListenerBucketKind.Regular => (true, false),
-                MatchListenerBucketKind.Once => (false, true),
-                MatchListenerBucketKind.All => (true, true),
-                _ => throw new ArgumentOutOfRangeException(nameof(bucketKind), bucketKind, null),
-            };
-
-            if (removeRegular)
-            {
-                registration.Listeners.Remove(handler);
-            }
-
-            if (removeOnce)
-            {
-                registration.OnceListeners.Remove(handler);
-            }
-
-            if (registration.IsEmpty)
-            {
-                _matchListeners.Remove(matchExpressionId);
-            }
-        }
-    }
-
-    private enum MatchListenerBucketKind
-    {
-        Regular,
-        Once,
-        All,
-    }
-
-    /// <summary>
-    /// Records the payload type associated with an event identifier once it is first observed.
-    /// </summary>
-    /// <typeparam name="TPayload">The payload type carried by the event.</typeparam>
-    /// <param name="eventDefinition">The event definition whose identifier should be bound.</param>
-    private void BindEventPayloadType<TPayload>(EventDefinition<TPayload> eventDefinition)
-    {
-        BindPayloadTypeCore(_eventPayloadTypes, eventDefinition.Id, typeof(TPayload));
-    }
-
-    /// <summary>
-    /// Records the payload type associated with a match expression identifier once it is first observed.
-    /// </summary>
-    /// <typeparam name="TPayload">The payload type expected by the match expression.</typeparam>
-    /// <param name="matchExpression">The match expression whose identifier should be bound.</param>
-    private void BindMatchExpressionPayloadType<TPayload>(MatchExpression<TPayload> matchExpression)
-    {
-        BindPayloadTypeCore(_matchExpressionPayloadTypes, matchExpression.Id, typeof(TPayload));
-    }
-
-
-    /// <summary>
-    /// Stores the first payload-type binding for an identifier and ignores later writes.
-    /// </summary>
-    /// <param name="registry">The identifier-to-payload-type registry to update.</param>
-    /// <param name="id">The event or match-expression identifier being bound.</param>
-    /// <param name="payloadType">The payload type associated with the identifier.</param>
-    private static void BindPayloadTypeCore(
-        IDictionary<string, Type> registry,
-        string id,
-        Type payloadType)
-    {
-        if (!registry.ContainsKey(id))
-        {
-            registry[id] = payloadType;
-        }
-    }
-
-    /// <summary>
-    /// Verifies that an event identifier has not already been bound to a different payload type.
-    /// </summary>
-    /// <typeparam name="TPayload">The payload type carried by the event.</typeparam>
-    /// <param name="eventDefinition">The event definition whose binding should be checked.</param>
-    /// <param name="operation">The calling operation used in the exception message.</param>
-    private void CheckEventPayloadTypeBinding<TPayload>(
-        EventDefinition<TPayload> eventDefinition,
-        [CallerMemberName] string operation = "")
-    {
-        CheckPayloadTypeBindingCore(
-            _eventPayloadTypes,
-            eventDefinition,
-            eventDefinition.Id,
-            typeof(TPayload),
-            operation);
-    }
-
-
-    /// <summary>
-    /// Verifies that a match expression identifier has not already been bound to a different payload type.
-    /// </summary>
-    /// <typeparam name="TPayload">The payload type expected by the match expression.</typeparam>
-    /// <param name="matchExpression">The match expression whose binding should be checked.</param>
-    /// <param name="operation">The calling operation used in the exception message.</param>
-    private void CheckMatchExpressionPayloadTypeBinding<TPayload>(
-        MatchExpression<TPayload> matchExpression,
-        [CallerMemberName] string operation = "")
-    {
-        CheckPayloadTypeBindingCore(
-            _matchExpressionPayloadTypes,
-            matchExpression,
-            matchExpression.Id,
-            typeof(TPayload),
-            operation);
-    }
-
-    /// <summary>
-    /// Creates the stored listener bucket for a typed match expression.
-    /// </summary>
-    /// <typeparam name="TPayload">The payload type expected by the match expression.</typeparam>
-    /// <param name="matchExpression">The match expression used to select emitted envelopes.</param>
-    private static MatchListenerRegistration CreateMatchListenerRegistration<TPayload>(
-        MatchExpression<TPayload> matchExpression)
-    {
-        return new MatchListenerRegistration(
-            matchExpression.Id,
-            envelope => envelope is EventEnvelope<TPayload> typedEnvelope && matchExpression.Matcher(typedEnvelope));
-    }
-
-    /// <summary>
-    /// Throws when an identifier is already bound to a conflicting payload type.
-    /// </summary>
-    /// <typeparam name="TBinding">The binding object type used to describe the failing target.</typeparam>
-    /// <param name="registry">The identifier-to-payload-type registry to inspect.</param>
-    /// <param name="binding">The binding instance used to describe the failing target in the message.</param>
-    /// <param name="id">The identifier being checked.</param>
-    /// <param name="currentType">The payload type requested by the current operation.</param>
-    /// <param name="operation">The calling operation used in the exception message.</param>
-    private static void CheckPayloadTypeBindingCore<TBinding>(
-        IDictionary<string, Type> registry,
-        TBinding binding,
-        string id,
-        Type currentType,
-        string operation)
-    {
-        if (!registry.TryGetValue(id, out var boundType) || boundType == currentType) return;
-
-        var bindingTarget = DescribeBindingTarget(binding);
-
-        throw new InvalidOperationException(
-            $"Cannot perform '{operation}' for {bindingTarget} '{id}' with payload type '{FormatTypeName(currentType)}' " +
-            $"because this EventContext already bound {bindingTarget} '{id}' to payload type '{FormatTypeName(boundType)}'.");
-    }
-
-    /// <summary>
-    /// Formats the binding type name used in payload-conflict exception messages.
-    /// </summary>
-    /// <typeparam name="TBinding">The binding object type being described.</typeparam>
-    /// <param name="binding">The binding instance whose logical type should be reported.</param>
-    /// <returns>The normalized binding type name used in diagnostics.</returns>
-    private static string DescribeBindingTarget<TBinding>(TBinding binding)
-    {
-        var bindingType = binding?.GetType() ?? typeof(TBinding);
-        var genericDefinition = bindingType.IsGenericType
-            ? bindingType.GetGenericTypeDefinition()
-            : bindingType;
-
-        if (genericDefinition == typeof(EventDefinition<>))
-        {
-            return nameof(EventDefinition<>);
-        }
-
-        if (genericDefinition == typeof(MatchExpression<>))
-        {
-            return nameof(MatchExpression<>);
-        }
-
-        return genericDefinition.Name;
-    }
-
-    /// <summary>
-    /// Formats a payload type for conflict diagnostics.
-    /// </summary>
-    /// <param name="type">The runtime type to format.</param>
-    /// <returns>The formatted type name.</returns>
-    private static string FormatTypeName(Type type)
-    {
-        return type.ToString();
-    }
-
-    /// <summary>
-    /// Holds one match expression's compiled matcher and subscribed delegates inside the context.
-    /// </summary>
-    /// <param name="id">The stable identifier for the match expression registration.</param>
-    /// <param name="matcher">The runtime matcher used to test emitted envelopes.</param>
-    private sealed class MatchListenerRegistration(string id, Func<object, bool> matcher)
-    {
-        /// <summary>
-        /// Gets the match expression identifier associated with this registration.
-        /// </summary>
-        public string Id { get; } = id;
-
-        /// <summary>
-        /// Gets the matcher that decides whether an emitted envelope should notify these listeners.
-        /// </summary>
-        public Func<object, bool> Matcher { get; } = matcher;
-
-        /// <summary>
-        /// Gets the listeners currently subscribed to this match expression.
-        /// </summary>
-        public HashSet<Delegate> Listeners { get; } = [];
-
-        /// <summary>
-        /// Gets the one-shot listeners currently subscribed to this match expression.
-        /// </summary>
-        public HashSet<Delegate> OnceListeners { get; } = [];
-
-        /// <summary>
-        /// Gets whether no regular or one-shot listeners remain in this registration.
-        /// </summary>
-        public bool IsEmpty => Listeners.Count == 0 && OnceListeners.Count == 0;
     }
 }

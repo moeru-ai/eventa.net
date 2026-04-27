@@ -556,14 +556,14 @@ The C# snippets above explain the mapping direction. The prototype in the
 current repository has already converged on more concrete implementation
 boundaries and differs from the early sketch in several clear ways:
 
-- `InvokeClient` and `InvokeStreamClient` remain two explicit client-side state
-  machines. This refactor only extracted shared mechanisms; it did not introduce
-  a single generic protocol engine.
-- Client-side pending operations are implemented as
-  `PendingInvokeOperation<TResponse, TRequest>` and
-  `PendingStreamInvokeOperation<TResponse, TRequest>` inside their bound client
-  types so subscription, completion, abort, and cleanup control flow all live
-  with the bound context and definition.
+- `InvokeClient` and `InvokeStreamClient` remain distinct public client types,
+  but their per-call lifecycle now flows through shared internal
+  `UnaryInvokeSessionEngine<TResponse, TRequest>` and
+  `StreamInvokeSessionEngine<TResponse, TRequest>` implementations.
+- `EventContext` delegates listener storage, payload-type binding, one-shot
+  removal, and match-expression snapshotting to `EventListenerStore`, so the
+  public context class stays focused on Eventa dispatch semantics and adapter
+  notification ordering.
 - Streaming currently uses `AsyncSignalQueue<T>` instead of the earlier
   `Channel<T>` sketch from this report, because the current implementation needs
   explicit `Complete` / `Fault` semantics and `onDispose` callbacks at the same
@@ -578,24 +578,29 @@ The shared internal support types extracted in this round are:
 | Type | Current responsibility |
 |------|----------|
 | `InvokeEventBindings<TResponse, TRequest>` | Materializes all send / receive event definitions from `InvokeEventDefinition` in one place |
-| `ClientCancellation` | Centralizes client-side cancellation registration, handles the `CancellationToken.Register(...)` race window, and guarantees the callback runs at most once |
+| `EventListenerStore` | Owns direct and match-expression listener buckets, once-listener removal, dispatch snapshots, and per-context payload-type bindings |
+| `Disposables` helpers (`RunOnceAction`, `ActionDisposable`, `DeferredDisposable`, `ClientCancellation`) | Centralize at-most-once cleanup, placeholder disposables, and client-side cancellation registration race handling |
 | `HandlerRegistration` | Combines protocol subscriptions and inflight cleanup into a single `IDisposable` |
 | `InvocationCancellationTracker` | Tracks the unary handler `invokeId -> CancellationTokenSource` map |
 | `RequestStreamInvocationState<TRequest>` | Holds the request queue, cancellation source, and execution task for request-stream handlers |
 | `RequestStreamInvocationTracker<TRequest>` | Lazily creates and publishes request-stream state, starts the handler outside the lock, and owns abort / dispose for inflight state |
-| `InvokeHandlerRegistrationFactory` | Keeps handler-side protocol subscriptions out of the public API facade classes and now wires all four request/response shape combinations |
+| `InvokeHandlerRegistrationFactory` | Keeps handler-side protocol subscriptions out of the public API facade classes, wires all four request/response shape combinations, and uses internal handler-session objects to avoid repeating context/events/invoke-id parameters |
+| `EventContextFeatures` | Provides typed access to `IEventContext.Extensions` for invoke-internal state without scattering string-key/object-cast logic |
 
 The current implementation still preserves several constraints that are already
 anchored by tests and should not be casually erased in future refactors:
 
-- `InvokeClient.EmitRequest()` must check `_finished` before sending because a
-  fatal-event subscription may complete the invoke before the request emit
+- client-side session startup must arm response/error subscriptions and
+  cancellation before sending because a fatal-event subscription may complete
+  the invoke before the request emit
 - The request-stream sender in `InvokeStreamClient` must stop enumerating input and
   must not emit late request items after early client cancellation or early
   enumerator disposal
 - The request-stream handler contract still supports "pre-first-item abort" in
   the C# prototype, even though the current TypeScript implementation is more
   conservative when handling unknown invoke IDs on `send-stream-end`
+- one-shot event and match-expression listeners are removed before callbacks run
+  so re-entrant emits do not invoke the same one-shot listener twice
 
 ---
 

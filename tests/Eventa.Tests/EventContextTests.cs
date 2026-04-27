@@ -59,6 +59,24 @@ public class EventContextTests
     }
 
     [Fact]
+    public void SubscribeOnce_WhenHandlerEmitsReentrantly_StillDispatchesOnlyOnce()
+    {
+        var context = new EventContext();
+        var definition = new EventDefinition<TestPayload>("test-event");
+        var callCount = 0;
+
+        using var _ = context.SubscribeOnce(definition, _ =>
+        {
+            callCount++;
+            context.Emit(definition, new TestPayload("reentrant"));
+        });
+
+        context.Emit(definition, new TestPayload("first"));
+
+        Assert.Equal(1, callCount);
+    }
+
+    [Fact]
     public void Unsubscribe_WithoutHandler_RemovesAllListenersForTheEvent()
     {
         var context = new EventContext();
@@ -176,6 +194,25 @@ public class EventContextTests
         context.Emit(definition, new TestPayload("match-second"));
 
         Assert.Equal(["match-first"], matchedValues);
+    }
+
+    [Fact]
+    public void SubscribeOnce_WithMatchExpression_WhenHandlerEmitsReentrantly_StillDispatchesOnlyOnce()
+    {
+        var context = new EventContext();
+        var definition = new EventDefinition<TestPayload>("test-event");
+        var expression = new MatchExpression<TestPayload>("match-all-once", _ => true);
+        var callCount = 0;
+
+        using var _ = context.SubscribeOnce(expression, _ =>
+        {
+            callCount++;
+            context.Emit(definition, new TestPayload("reentrant"));
+        });
+
+        context.Emit(definition, new TestPayload("first"));
+
+        Assert.Equal(1, callCount);
     }
 
     [Fact]

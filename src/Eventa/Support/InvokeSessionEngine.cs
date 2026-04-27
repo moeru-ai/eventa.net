@@ -206,8 +206,7 @@ internal abstract class InvokeSessionEngine<TResponse, TRequest>(
         IEventContext context,
         out InvokeInternalConfig config)
     {
-        if (context.Extensions.TryGetValue(InvokeExtensions.InternalInvokeConfigKey, out var rawConfig)
-            && rawConfig is InvokeInternalConfig internalConfig)
+        if (context.TryGetFeature<InvokeInternalConfig>(InvokeExtensions.InternalInvokeConfigKey, out var internalConfig))
         {
             config = internalConfig;
             return true;
