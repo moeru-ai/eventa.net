@@ -1,4 +1,63 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Eventa;
+
+/// <summary>
+/// Centralizes typed access to <see cref="IEventContext.Extensions"/> for internal features.
+/// </summary>
+internal static class EventContextFeatures
+{
+    /// <summary>
+    /// Resolves a typed context feature by key, creating or replacing the stored value when needed.
+    /// </summary>
+    public static TFeature GetOrCreateFeature<TFeature>(
+        this IEventContext context,
+        string key)
+        where TFeature : class, new()
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentException.ThrowIfNullOrEmpty(key);
+
+        lock (context.Extensions)
+        {
+            if (context.Extensions.TryGetValue(key, out var rawFeature)
+                && rawFeature is TFeature feature)
+            {
+                return feature;
+            }
+
+            feature = new TFeature();
+            context.Extensions[key] = feature;
+            return feature;
+        }
+    }
+
+    /// <summary>
+    /// Tries to resolve a typed context feature by key without creating it.
+    /// </summary>
+    public static bool TryGetFeature<TFeature>(
+        this IEventContext context,
+        string key,
+        [NotNullWhen(true)] out TFeature? feature)
+        where TFeature : class
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        ArgumentException.ThrowIfNullOrEmpty(key);
+
+        lock (context.Extensions)
+        {
+            if (context.Extensions.TryGetValue(key, out var rawFeature)
+                && rawFeature is TFeature typedFeature)
+            {
+                feature = typedFeature;
+                return true;
+            }
+        }
+
+        feature = null;
+        return false;
+    }
+}
 
 /// <summary>
 /// Stores per-context invoke extension state under <see cref="InvokeExtensions.InternalInvokeConfigKey"/>.

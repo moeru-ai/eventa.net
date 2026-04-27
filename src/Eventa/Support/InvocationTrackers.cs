@@ -1,6 +1,83 @@
 namespace Eventa;
 
 /// <summary>
+/// Tracks per-invoke cancellation sources for unary handlers so protocol abort messages can cancel
+/// the currently executing work.
+/// </summary>
+internal sealed class InvocationCancellationTracker
+{
+    private readonly Lock _sync = new();
+    private readonly Dictionary<string, CancellationTokenSource> _inflight =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Starts tracking a new invoke and returns the <see cref="CancellationTokenSource" /> that
+    /// should be passed into the handler.
+    /// </summary>
+    /// <param name="invokeId">The protocol invoke id that owns the cancellation source.</param>
+    public CancellationTokenSource BeginTracking(string invokeId)
+    {
+        var cancellationSource = new CancellationTokenSource();
+
+        lock (_sync)
+        {
+            _inflight[invokeId] = cancellationSource;
+        }
+
+        return cancellationSource;
+    }
+
+    /// <summary>
+    /// Cancels the tracked invoke when it is still inflight.
+    /// </summary>
+    /// <param name="invokeId">The invoke id that received a protocol abort message.</param>
+    public void TryCancel(string invokeId)
+    {
+        lock (_sync)
+        {
+            if (!_inflight.TryGetValue(invokeId, out var cancellationSource)) return;
+
+            cancellationSource.Cancel();
+        }
+    }
+
+    /// <summary>
+    /// Stops tracking an invoke once handler execution has finished.
+    /// </summary>
+    /// <param name="invokeId">The completed invoke id.</param>
+    public void StopTracking(string invokeId, CancellationTokenSource cancellationSource)
+    {
+        lock (_sync)
+        {
+            if (!_inflight.TryGetValue(invokeId, out var trackedSource)) return;
+            if (!ReferenceEquals(trackedSource, cancellationSource)) return;
+
+            _inflight.Remove(invokeId);
+        }
+    }
+
+    /// <summary>
+    /// Cancels and disposes every tracked invoke when the handler registration is torn down.
+    /// </summary>
+    public void CancelAllAndDispose()
+    {
+        List<CancellationTokenSource> cancellationSources;
+
+        lock (_sync)
+        {
+            cancellationSources = [.. _inflight.Values];
+            _inflight.Clear();
+        }
+
+        foreach (var cancellationSource in cancellationSources)
+        {
+            cancellationSource.Cancel();
+            cancellationSource.Dispose();
+        }
+    }
+}
+
+/// <summary>
 /// Holds the mutable per-invoke state for handlers that consume a request stream.
 /// </summary>
 /// <param name="invokeId">The protocol invoke id that owns this request-stream state.</param>
@@ -90,15 +167,7 @@ internal sealed class RequestStreamInvocationTracker<TRequest>
         }
         catch
         {
-            lock (_sync)
-            {
-                if (_inflight.TryGetValue(invokeId, out var existing)
-                    && ReferenceEquals(existing, created))
-                {
-                    _inflight.Remove(invokeId);
-                }
-            }
-
+            RemoveIfCurrent(created);
             created.Dispose();
             throw;
         }
@@ -110,8 +179,20 @@ internal sealed class RequestStreamInvocationTracker<TRequest>
     /// <param name="state">The state object that has finished executing.</param>
     public void Remove(RequestStreamInvocationState<TRequest> state)
     {
+        RemoveIfCurrent(state);
+    }
+
+    /// <summary>
+    /// Removes the state only when it is still the current state for its invoke id.
+    /// </summary>
+    /// <param name="state">The state object that should own the map entry being removed.</param>
+    private void RemoveIfCurrent(RequestStreamInvocationState<TRequest> state)
+    {
         lock (_sync)
         {
+            if (!_inflight.TryGetValue(state.InvokeId, out var trackedState)) return;
+            if (!ReferenceEquals(trackedState, state)) return;
+
             _inflight.Remove(state.InvokeId);
         }
     }
@@ -121,15 +202,18 @@ internal sealed class RequestStreamInvocationTracker<TRequest>
     /// </summary>
     public void AbortAllAndDispose()
     {
+        List<RequestStreamInvocationState<TRequest>> states;
+
         lock (_sync)
         {
-            foreach (var state in _inflight.Values)
-            {
-                state.Abort();
-                state.Dispose();
-            }
-
+            states = [.. _inflight.Values];
             _inflight.Clear();
+        }
+
+        foreach (var state in states)
+        {
+            state.Abort();
+            state.Dispose();
         }
     }
 }

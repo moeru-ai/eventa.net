@@ -16,6 +16,7 @@ Current C# target: `EventContextTests.cs`
 
 - Covers `Subscribe`+`Emit`, same handler only once, `SubscribeOnce` listeners, `Unsubscribe(event)`, returned disposer, `Unsubscribe(event, handler)`, returned disposer for a specific listener, and match-expression `SubscribeOnce` / `Unsubscribe(matchExpression)` / `Unsubscribe(matchExpression, handler)` semantics.
 - Extra C# contract: `MatchExpression` subscriptions are integrated into `EventContext` dispatch, only receive matching payloads, and support one-shot, bulk-unsubscribe, and handler-specific unsubscribe behavior.
+- Extra C# contract: one-shot direct and match-expression listeners are removed before their callbacks run, so re-entrant emits from inside the callback do not dispatch the same one-shot listener twice.
 - Extra C# contract: adapter-aware contexts surface local and match-expression dispatches through `IEventaAdapter.OnReceived` using `EventEnvelope<TPayload>` values, preserve the original event id in `envelope.EventId` even when `eventId` is a match-expression id, call `OnSent` only after local processing completes, and skip `OnSent` entirely if a local listener throws.
 - Extra C# contract: the default `EventContext` fails fast if one `EventDefinition.Id` or `MatchExpression.Id` is reused with a different payload type inside the same context; first use via `Subscribe`, `SubscribeOnce`, or either `Emit` overload establishes that binding, `Unsubscribe(event)` and `Unsubscribe(matchExpression)` do not release it, and only a different `EventContext` can rebind the same identifier.
 
@@ -117,17 +118,29 @@ Status: `extra`
 
 - Internal helper coverage for placeholder disposables that may be disposed before the real subscription or cancellation registration is attached; also asserts duplicate attachment is rejected without leaking the original cleanup handle.
 
+### `EventContextFeaturesTests.cs`
+
+Status: `extra`
+
+- Internal feature-bag coverage for typed access to `IEventContext.Extensions`: getting or creating the same typed instance by key, replacing mismatched stored values, and returning `false` for missing or differently typed values without creating anything.
+
 ### `InvokeSessionEngineTests.cs`
 
 Status: `extra`
 
 - Internal client-session coverage for the shared invoke lifecycle extraction: inline and queued send faults on both unary and stream invokes fault locally without emitting `SendAbort`, keeping protocol aborts reserved for client-initiated cancellation.
 
+### `InvocationCancellationTrackerTests.cs`
+
+Status: `extra`
+
+- Internal unary-handler tracker coverage for stale-source removal: a completed older cancellation source must not remove or hide the current source for the same invoke id.
+
 ### `RequestStreamInvocationTrackerTests.cs`
 
 Status: `extra`
 
-- Internal tracker coverage for publishing request-stream state before handler startup, starting execution outside the tracker lock, and rolling back broken inflight state when startup throws synchronously.
+- Internal tracker coverage for publishing request-stream state before handler startup, starting execution outside the tracker lock, rolling back broken inflight state when startup throws synchronously, and ignoring stale-state removals when a newer state owns the same invoke id.
 
 ### `RequestStreamInvocationStateTests.cs`
 

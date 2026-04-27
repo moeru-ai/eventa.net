@@ -41,7 +41,7 @@ public static class InvokeExtensions
 
         mapError ??= static payload => payload is Exception exception ? exception : null;
 
-        var config = GetOrCreateInvokeInternalConfig(context);
+        var config = context.GetOrCreateFeature<InvokeInternalConfig>(InternalInvokeConfigKey);
         var alreadyRegistered = config.AbortOnEvents.Any(existing =>
             existing.Kind == AbortEventRegistrationKind.Event
             && existing.Id == fatalEvent.Id);
@@ -84,7 +84,7 @@ public static class InvokeExtensions
 
         mapError ??= static payload => payload is Exception exception ? exception : null;
 
-        var config = GetOrCreateInvokeInternalConfig(context);
+        var config = context.GetOrCreateFeature<InvokeInternalConfig>(InternalInvokeConfigKey);
         var alreadyRegistered = config.AbortOnEvents.Any(existing =>
             existing.Kind == AbortEventRegistrationKind.MatchExpression
             && existing.Id == fatalMatch.Id);
@@ -120,20 +120,4 @@ public static class InvokeExtensions
         RegisterAbortEvent<object>(context, fatalEvent);
     }
 
-    /// <summary>
-    /// Resolves the per-context invoke extension state, creating it on first use.
-    /// </summary>
-    /// <param name="context">The context whose extension bag should hold the invoke config.</param>
-    /// <returns>The existing or newly created invoke extension state for the context.</returns>
-    private static InvokeInternalConfig GetOrCreateInvokeInternalConfig(IEventContext context)
-    {
-        var hasConfig = context.Extensions.TryGetValue(InternalInvokeConfigKey, out var rawConfig);
-        if (!hasConfig || rawConfig is not InvokeInternalConfig config)
-        {
-            config = new InvokeInternalConfig();
-            context.Extensions[InternalInvokeConfigKey] = config;
-        }
-
-        return config;
-    }
 }

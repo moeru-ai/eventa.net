@@ -62,4 +62,33 @@ public class RequestStreamInvocationTrackerTests
         Assert.Equal(1, Volatile.Read(ref successfulStarts));
         Assert.NotNull(state.Execution);
     }
+
+    [Fact]
+    public void Remove_WhenGivenStaleState_DoesNotRemoveCurrentStateForTheSameInvoke()
+    {
+        var tracker = new RequestStreamInvocationTracker<int>();
+        var startCount = 0;
+        var stale = tracker.GetOrCreate("invoke", _ =>
+        {
+            Interlocked.Increment(ref startCount);
+            return Task.CompletedTask;
+        });
+
+        tracker.Remove(stale);
+        var current = tracker.GetOrCreate("invoke", _ =>
+        {
+            Interlocked.Increment(ref startCount);
+            return Task.CompletedTask;
+        });
+
+        tracker.Remove(stale);
+        var resolved = tracker.GetOrCreate("invoke", _ =>
+        {
+            Interlocked.Increment(ref startCount);
+            return Task.CompletedTask;
+        });
+
+        Assert.Same(current, resolved);
+        Assert.Equal(2, Volatile.Read(ref startCount));
+    }
 }

@@ -1,6 +1,6 @@
 # Eventa C# Known Differences
 
-Last reviewed: 2026-04-26
+Last reviewed: 2026-04-27
 
 This document records behavior differences that are currently present in the
 playground C# implementation under `playground/src/Eventa`, compared with the
