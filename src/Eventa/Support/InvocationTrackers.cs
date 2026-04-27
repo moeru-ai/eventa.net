@@ -35,10 +35,9 @@ internal sealed class InvocationCancellationTracker
     {
         lock (_sync)
         {
-            if (_inflight.TryGetValue(invokeId, out var cancellationSource))
-            {
-                cancellationSource.Cancel();
-            }
+            if (!_inflight.TryGetValue(invokeId, out var cancellationSource)) return;
+
+            cancellationSource.Cancel();
         }
     }
 
@@ -50,11 +49,10 @@ internal sealed class InvocationCancellationTracker
     {
         lock (_sync)
         {
-            if (_inflight.TryGetValue(invokeId, out var trackedSource)
-                && ReferenceEquals(trackedSource, cancellationSource))
-            {
-                _inflight.Remove(invokeId);
-            }
+            if (!_inflight.TryGetValue(invokeId, out var trackedSource)) return;
+            if (!ReferenceEquals(trackedSource, cancellationSource)) return;
+
+            _inflight.Remove(invokeId);
         }
     }
 
@@ -169,15 +167,7 @@ internal sealed class RequestStreamInvocationTracker<TRequest>
         }
         catch
         {
-            lock (_sync)
-            {
-                if (_inflight.TryGetValue(invokeId, out var existing)
-                    && ReferenceEquals(existing, created))
-                {
-                    _inflight.Remove(invokeId);
-                }
-            }
-
+            RemoveIfCurrent(created);
             created.Dispose();
             throw;
         }
@@ -189,13 +179,21 @@ internal sealed class RequestStreamInvocationTracker<TRequest>
     /// <param name="state">The state object that has finished executing.</param>
     public void Remove(RequestStreamInvocationState<TRequest> state)
     {
+        RemoveIfCurrent(state);
+    }
+
+    /// <summary>
+    /// Removes the state only when it is still the current state for its invoke id.
+    /// </summary>
+    /// <param name="state">The state object that should own the map entry being removed.</param>
+    private void RemoveIfCurrent(RequestStreamInvocationState<TRequest> state)
+    {
         lock (_sync)
         {
-            if (_inflight.TryGetValue(state.InvokeId, out var trackedState)
-                && ReferenceEquals(trackedState, state))
-            {
-                _inflight.Remove(state.InvokeId);
-            }
+            if (!_inflight.TryGetValue(state.InvokeId, out var trackedState)) return;
+            if (!ReferenceEquals(trackedState, state)) return;
+
+            _inflight.Remove(state.InvokeId);
         }
     }
 
