@@ -1,0 +1,29 @@
+name: Run Example
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run-example:
+    name: Run example
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Eventa.slnx
+
+      - name: Run example
+        run: dotnet run --project examples/Eventa.Example/Eventa.Example.csproj --configuration Release --no-restore
