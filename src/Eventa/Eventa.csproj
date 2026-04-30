@@ -5,12 +5,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsAotCompatible>true</IsAotCompatible>
-    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="FSharp.Core" Version="11.0.100" />
-    <PackageReference Include="Microsoft.NET.ILLink.Tasks" Version="10.0.7" />
     <PackageReference Include="pblasucci.ananoid" Version="2.0.0" />
   </ItemGroup>
 

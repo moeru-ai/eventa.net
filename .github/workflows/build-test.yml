@@ -23,7 +23,6 @@ jobs:
           dotnet-version: 10.0.x
           cache: true
           cache-dependency-path: |
-            src/Eventa/packages.lock.json
             examples/Eventa.Example/packages.lock.json
             tests/Eventa.Tests/packages.lock.json
 
