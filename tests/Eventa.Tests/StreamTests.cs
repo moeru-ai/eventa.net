@@ -768,9 +768,10 @@ public class StreamTests
         var definition = new InvokeEventDefinition<int, int>("abort-request-stream-before-first-item");
         var receiveErrorEvent = new EventDefinition<ReceiveErrorPayload>(definition.ReceiveErrorId);
         var handlerNotified = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handlerObservedCancellation = new TaskCompletionSource<OperationCanceledException>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         var received = new List<int>();
         var responses = new List<int>();
-        var handlerObservedCanceledToken = false;
         var receiveErrorCount = 0;
         Exception? handlerError = null;
         Exception? receiveError = null;
@@ -806,13 +807,14 @@ public class StreamTests
                 }
                 catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
                 {
-                    handlerObservedCanceledToken = true;
                     handlerError = error;
+                    handlerObservedCancellation.TrySetResult(error);
                     throw;
                 }
                 catch (Exception error)
                 {
                     handlerError = error;
+                    handlerObservedCancellation.TrySetException(error);
                     throw;
                 }
 
@@ -851,15 +853,16 @@ public class StreamTests
 
         await readTask.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await handlerNotified.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var observedHandlerError = await handlerObservedCancellation.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken);
 
         Assert.Empty(received);
         Assert.Empty(responses);
-        Assert.True(handlerObservedCanceledToken);
-        Assert.NotNull(handlerError);
+        Assert.Same(observedHandlerError, handlerError);
         Assert.Null(receiveError);
         Assert.Equal(0, Volatile.Read(ref receiveErrorCount));
         Assert.NotNull(readError);
-        Assert.IsAssignableFrom<OperationCanceledException>(handlerError);
         Assert.IsAssignableFrom<OperationCanceledException>(readError);
     }
 
