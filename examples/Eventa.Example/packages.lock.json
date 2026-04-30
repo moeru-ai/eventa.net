@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "Microsoft.Extensions.DependencyInjection": {
+        "type": "Direct",
+        "requested": "[10.0.7, )",
+        "resolved": "10.0.7",
+        "contentHash": "91F/o3emPV/+xY/ip3s2LqDNF14kjttlVtq0BXgg6p4MnCzeSZxnUJm+t6WRrtD3JdGo88/oX+z7OwK4y8PZuw==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.7"
+        }
+      },
+      "FSharp.Core": {
+        "type": "Transitive",
+        "resolved": "11.0.100",
+        "contentHash": "ijfOz8ihqkFNdKUY57l8YTrbJNfQW/6tFYAUU57ByZzmTxxf1o12cQaCqDOjNqAz4h86AKS7IwQkNhYcrjLeCQ=="
+      },
+      "Microsoft.Extensions.DependencyInjection.Abstractions": {
+        "type": "Transitive",
+        "resolved": "10.0.7",
+        "contentHash": "Z6mfFEaFcwCfSboxJwOLfu7/31npCY9q70WUamHW/vRQhDvBKOT4Vf9YkZj5J6hLvJpb0oDEYfHunQZj0xxvKw=="
+      },
+      "pblasucci.ananoid": {
+        "type": "Transitive",
+        "resolved": "2.0.0",
+        "contentHash": "9QIgX+KrA7WYcJKq54y+A/ncKTKMlR7h95i38wSgb37y5l3XpYrybCcUx/uGH/d3FGCRieLNyUkC7XACgVsurA=="
+      },
+      "eventa": {
+        "type": "Project",
+        "dependencies": {
+          "FSharp.Core": "[11.0.100, )",
+          "pblasucci.ananoid": "[2.0.0, )"
+        }
+      }
+    }
+  }
+}

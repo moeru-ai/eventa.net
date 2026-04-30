@@ -169,7 +169,7 @@ internal abstract class InvokeSessionEngine<TResponse, TRequest>(
             return;
         }
 
-        _ = Task.Run(() => ExecuteSendRequestAsync(onSendFault), CancellationToken.None);
+        _ = Task.Run(() => ExecuteSendRequestAsync(onSendFault), _requestCancellationSource.Token);
     }
 
     /// <summary>
