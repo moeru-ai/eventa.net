@@ -266,7 +266,7 @@ internal static class InvokeHandlerRegistrationFactory
             // Avoid starting handler-stream enumeration after an early abort won.
             if (cancellationToken.IsCancellationRequested) return;
 
-            await foreach (var item in responses.ConfigureAwait(false))
+            await foreach (var item in responses.WithCancellation(cancellationToken).ConfigureAwait(false))
             {
                 // Cancellation can win after MoveNextAsync but before we emit this item.
                 if (cancellationToken.IsCancellationRequested) return;
