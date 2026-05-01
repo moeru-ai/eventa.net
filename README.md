@@ -212,5 +212,5 @@ MIT
 [build-test-href]: https://github.com/moeru-ai/eventa.net/actions/workflows/build-test.yml
 [run-example-src]: https://github.com/moeru-ai/eventa.net/actions/workflows/run-example.yml/badge.svg
 [run-example-href]: https://github.com/moeru-ai/eventa.net/actions/workflows/run-example.yml
-[license-src]: https://img.shields.io/github/license/moeru-ai/eventa.svg?style=flat
-[license-href]: https://github.com/moeru-ai/eventa/blob/main/LICENSE
+[license-src]: https://img.shields.io/github/license/moeru-ai/eventa.net.svg?style=flat
+[license-href]: LICENSE
