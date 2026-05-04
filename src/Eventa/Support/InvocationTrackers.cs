@@ -45,6 +45,7 @@ internal sealed class InvocationCancellationTracker
     /// Stops tracking an invoke once handler execution has finished.
     /// </summary>
     /// <param name="invokeId">The completed invoke id.</param>
+    /// <param name="cancellationSource">The cancellation source owned by the completed handler.</param>
     public void StopTracking(string invokeId, CancellationTokenSource cancellationSource)
     {
         lock (_sync)

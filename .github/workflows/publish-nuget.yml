@@ -1,0 +1,48 @@
+name: Publish NuGet
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish NuGet package
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore Eventa.slnx --locked-mode
+
+      - name: Build
+        run: dotnet build Eventa.slnx --configuration Release --no-restore
+
+      - name: Pack
+        run: dotnet pack src/Eventa/Eventa.csproj --configuration Release --no-build -o artifacts/package
+
+      - name: NuGet login
+        id: login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push package
+        run: dotnet nuget push artifacts/package/*.nupkg --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Push symbols
+        run: dotnet nuget push artifacts/package/*.snupkg --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
