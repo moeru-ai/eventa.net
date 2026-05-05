@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Eventa</PackageId>
-    <Version>0.1.0-preview.1</Version>
+    <Version>0.1.0-preview.2</Version>
     <Authors>Moeru AI;Garfield550</Authors>
     <Description>Transport-agnostic, type-safe events for .NET with ergonomic request/response and streaming invoke flows.</Description>
     <PackageTags>events;event-driven;rpc;streaming;dotnet;aot</PackageTags>

@@ -2,16 +2,17 @@
 
 [![Build and Test][build-test-src]][build-test-href]
 [![Run Example][run-example-src]][run-example-href]
+[![NuGet][nuget-src]][nuget-href]
 [![License][license-src]][license-href]
 
 Transport-agnostic, type-safe events for .NET 10, with ergonomic request/response
 and streaming invoke flows built on top of event primitives.
 
-Eventa for C# is a source-first preview of the Eventa protocol ideas in idiomatic
-.NET. It uses `EventDefinition<T>` for strongly typed events, `EventContext` for
-local dispatch and adapter hooks, `Task<T>` for unary invokes, `IAsyncEnumerable<T>`
-for streams, `CancellationToken` for cancellation, and `IDisposable` for listener
-lifetimes.
+Eventa for C# brings the Eventa protocol ideas into idiomatic .NET. It uses
+`EventDefinition<T>` for strongly typed events, `EventContext` for local
+dispatch and adapter hooks, `Task<T>` for unary invokes, `IAsyncEnumerable<T>`
+for streams, `CancellationToken` for cancellation, and `IDisposable` for
+listener lifetimes.
 
 ## Overview
 
@@ -48,13 +49,20 @@ The C# implementation currently focuses on the core protocol layer:
 - .NET 10 SDK
 - A shell that can run `dotnet`
 
-This repository is source-first right now. There is no NuGet installation step
-documented here; clone the repository and work from the solution under this
-directory.
+## Installation
+
+Eventa is available on NuGet:
+
+```sh
+dotnet add package Eventa --prerelease
+```
+
+Package page: <https://www.nuget.org/packages/Eventa/>
 
 ## Getting Started
 
-From this directory:
+After installing the package, start with the event and invoke examples below.
+To run the repository examples locally:
 
 ```sh
 dotnet restore Eventa.slnx --locked-mode
@@ -212,5 +220,7 @@ MIT
 [build-test-href]: https://github.com/moeru-ai/eventa.net/actions/workflows/build-test.yml
 [run-example-src]: https://github.com/moeru-ai/eventa.net/actions/workflows/run-example.yml/badge.svg
 [run-example-href]: https://github.com/moeru-ai/eventa.net/actions/workflows/run-example.yml
+[nuget-src]: https://img.shields.io/nuget/vpre/Eventa.svg?style=flat
+[nuget-href]: https://www.nuget.org/packages/Eventa/
 [license-src]: https://img.shields.io/github/license/moeru-ai/eventa.net.svg?style=flat
 [license-href]: LICENSE

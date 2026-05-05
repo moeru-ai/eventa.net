@@ -550,12 +550,13 @@ private static async IAsyncEnumerable<TRes> StreamFromCallback<TReq, TRes>(
 }
 ```
 
-### 3.9 Current Repository Implementation Status (2026-04)
+### 3.9 Current Repository Implementation Status (2026-05)
 
 The C# snippets above explain the mapping direction. The prototype in the
 current repository has already converged on more concrete implementation
 boundaries and differs from the early sketch in several clear ways:
 
+- The core library is published as the NuGet package `Eventa`.
 - `InvokeClient` and `InvokeStreamClient` remain distinct public client types,
   but their per-call lifecycle now flows through shared internal
   `UnaryInvokeSessionEngine<TResponse, TRequest>` and
@@ -840,10 +841,21 @@ public class StreamTests
 
 ## 6. Recommended Project Structure
 
+This section is retained as migration planning history. The published `Eventa`
+package contains the core Eventa event, invoke, stream, and context APIs.
+Adapter packages are separate from `Eventa` and are not included in the core
+package.
+
+```sh
+dotnet add package Eventa --prerelease
+```
+
+NuGet package page: <https://www.nuget.org/packages/Eventa/>
+
 ```
 Eventa.sln
 ├── src/
-│   ├── Eventa.Core/                     # Core library
+│   ├── Eventa/                          # Core library
 │   │   ├── EventDefinition.cs           # EventDefinition<T> and InvokeEventDefinition<TResponse, TRequest>
 │   │   ├── EventContext.cs              # IEventContext implementation
 │   │   ├── EventInvoke.cs               # CreateInvokeClient / RegisterInvokeHandler
@@ -858,7 +870,7 @@ Eventa.sln
 │   └── Eventa.Adapters.Grpc/            # gRPC adapter
 │
 ├── tests/
-│   ├── Eventa.Core.Tests/               # Core unit tests
+│   ├── Eventa.Tests/                    # Core unit tests
 │   │   ├── EventContextTests.cs
 │   │   ├── InvokeTests.cs
 │   │   ├── StreamTests.cs
@@ -871,14 +883,14 @@ Eventa.sln
     └── Eventa.Sample.WebApi/            # ASP.NET Core sample
 ```
 
-**NuGet package split**:
+**Conceptual package layout**:
 
 | Package | Contents | Dependencies |
 |------|------|------|
-| `Eventa.Core` | Event definitions, Context, Invoke, Stream | No external dependencies |
-| `Eventa.Adapters.WebSocket` | WebSocket adapter | `Eventa.Core` |
-| `Eventa.Adapters.SignalR` | SignalR adapter | `Eventa.Core` + `Microsoft.AspNetCore.SignalR` |
-| `Eventa.Adapters.Grpc` | gRPC adapter | `Eventa.Core` + `Grpc.Net.Client` |
+| `Eventa` | Event definitions, Context, Invoke, Stream | No external dependencies |
+| `Eventa.Adapters.WebSocket` | WebSocket adapter package | Separate from `Eventa` |
+| `Eventa.Adapters.SignalR` | SignalR adapter package | Separate from `Eventa` |
+| `Eventa.Adapters.Grpc` | gRPC adapter package | Separate from `Eventa` |
 
 ---
 
@@ -920,7 +932,7 @@ For differences verified against the current playground C# implementation, see
 
 ## 8. Recommended Implementation Roadmap
 
-### Phase 1 - Core Library (`Eventa.Core`)
+### Phase 1 - Core Library (`Eventa`)
 
 1. Define `EventDefinition<T>` / `InvokeEventDefinition<TRes, TReq>` as records
 2. Implement `EventContext` (in-memory loopback, Emit/Subscribe/SubscribeOnce/Unsubscribe)
