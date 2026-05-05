@@ -94,8 +94,7 @@ internal sealed class DeferredDisposable : IDisposable
 /// <remarks>
 /// The helper centralizes the race around <see cref="CancellationToken.Register(Action)" /> so
 /// callers can share one consistent pre-check, registration, and post-check sequence. The
-/// supplied <paramref name="onCancellation" /> callback is guaranteed to run at most once
-/// across those three paths.
+/// supplied cancellation callback is guaranteed to run at most once across those three paths.
 /// </remarks>
 internal static class ClientCancellation
 {
