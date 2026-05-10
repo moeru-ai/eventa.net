@@ -153,6 +153,12 @@ public sealed class ChannelClosedException : Exception
 }
 ```
 
+`ChannelPipe` owns the internal channels that connect `Left` and `Right`; both
+pipe-created endpoints must complete their outbound writers on disposal so the
+paired endpoint observes channel completion. Custom `ChannelEndpoint` instances
+respect `CompleteOutboundOnDispose`; when it is `false`, disposing the endpoint
+does not complete an externally owned outbound writer.
+
 Recommended new core transport-facing abstractions:
 
 ```csharp
@@ -400,9 +406,9 @@ adapters can reuse the same fatal path.
   interface
 - does not block indefinitely waiting for remote code
 - is idempotent and thread-safe under concurrent calls
-- runs the terminal transition, outbound completion, inbound pump cancellation,
-  deterministic transport fatal notification, closed-event dispatch, and owned
-  `EventContext` disposal at most once
+- runs the terminal transition, optional outbound completion, inbound pump
+  cancellation, deterministic transport fatal notification, closed-event
+  dispatch, and owned `EventContext` disposal at most once
 
 Ordering rule:
 
@@ -440,8 +446,11 @@ Terminal result precedence follows the transport-wide first-wins rule above.
 Otherwise local endpoint disposal faults the session with
 `ChannelClosedException("Channel endpoint disposed.")`.
 
-The paired endpoint observes the same disposal through outbound completion and
-uses the remote close or fault sequence above.
+When outbound completion is owned, or when the external owner completes or faults
+the writer, the paired endpoint observes disposal through channel completion and
+uses the remote close or fault sequence above. If `CompleteOutboundOnDispose` is
+`false` and no external completion or fault occurs, the paired endpoint is not
+guaranteed to observe local endpoint disposal.
 
 Post-terminal user `IEventContext` operations:
 
@@ -537,8 +546,13 @@ Channel adapter tests:
 - Local endpoint disposal runs deterministic transport fatal notification before
   public closed-event dispatch and before context disposal clears listeners.
 - Local endpoint disposal does not emit invoke `SendAbort` protocol events.
-- The paired endpoint observes disposal through channel completion and applies
-  the remote close or fault sequence.
+- Disposing a default `ChannelPipe` endpoint is observed by the paired endpoint
+  through channel completion.
+- Disposing a custom endpoint with `CompleteOutboundOnDispose=true` is observed by
+  the paired endpoint through channel completion.
+- Disposing a custom endpoint with `CompleteOutboundOnDispose=false` does not
+  promise paired endpoint observation until the external writer owner completes
+  or faults the writer.
 - Concurrent `ChannelPipe.Dispose()` calls dispose both endpoints once.
 - Concurrent `ChannelEndpoint.Dispose()` calls run endpoint terminal notification
   once.
