@@ -350,12 +350,22 @@ a public `ChannelClosedException` is needed to add context. If a faulted
 completion is wrapped, the original exception must be exposed as the wrapper's
 `InnerException`.
 
+Endpoint terminal cause precedence is first terminal cause wins. The first
+remote close, remote fault, local endpoint disposal, malformed or null envelope,
+inbound dispatch rejection, or inbound listener exception that moves the endpoint
+into terminal state determines the mapped fatal exception,
+`ChannelClosedPayload.Error`, and cleanup sequence. Later terminal causes are
+ignored for public closed-event dispatch and invoke or stream fatal notification.
+
 Terminal result precedence is first terminal result wins for every transport
-fatal condition. If per-call cancellation, a protocol response, a protocol
-error, or a stream end has already completed a unary or stream session,
-transport fatal notification must not rewrite that result. Otherwise channel
-close, channel fault, or local endpoint disposal faults the session with the
-mapped transport exception.
+fatal condition. The endpoint first-wins rule selects the transport fatal
+exception; the session first-wins rule decides whether that exception can still
+fault each pending unary or stream session. If per-call cancellation, a protocol
+response, a protocol error, or a stream end has already completed a unary or
+stream session, transport fatal notification must not rewrite that result.
+Otherwise channel close, channel fault, local endpoint disposal, malformed input,
+or inbound listener failure faults the session with the mapped transport
+exception.
 
 The deterministic transport fatal path is not normal event dispatch. It must not
 rely on `HashSet` listener order, arbitrary user callbacks, or public
@@ -432,6 +442,18 @@ Otherwise local endpoint disposal faults the session with
 
 The paired endpoint observes the same disposal through outbound completion and
 uses the remote close or fault sequence above.
+
+Post-terminal user `IEventContext` operations:
+
+- User-initiated `Emit`, `Subscribe`, `SubscribeOnce`, `Unsubscribe`, invoke
+  client creation, and invoke handler registration after endpoint terminal
+  transition must fail fast with `ObjectDisposedException` or
+  `ChannelClosedException`.
+- User-initiated `Emit` after endpoint terminal transition must not run local
+  listener dispatch and must not write to the outbound channel.
+- Internal deterministic fatal notification and public closed-event dispatch are
+  allowed during the terminal sequence. They are not routed through ordinary
+  user-initiated `Emit`.
 
 ## Error Handling
 
@@ -522,6 +544,14 @@ Channel adapter tests:
 - Concurrent disposal preserves ordering: deterministic transport fatal
   notification runs before public closed-event dispatch, and public closed-event
   dispatch runs before owned `EventContext` disposal.
+- Post-terminal user `Emit` fails fast without local dispatch or outbound write.
+- Post-terminal user `Subscribe`, `SubscribeOnce`, `Unsubscribe`, invoke client
+  creation, and invoke handler registration fail fast.
+- Remote fault racing local endpoint disposal exposes the winning terminal cause
+  consistently through `ChannelClosedPayload.Error` and invoke or stream fatal
+  notification.
+- Malformed inbound envelope racing inbound listener exception exposes only one
+  winning terminal cause.
 - Faulting one channel runs deterministic transport fatal notification before
   public closed-event dispatch and before context disposal clears listeners.
 - Pending unary invoke faults when the channel closes or faults.
@@ -536,6 +566,12 @@ Channel adapter tests:
   local endpoint disposal keeps the existing cancellation result.
 - Transport fatal notification that completes before per-call cancellation faults
   sessions with the mapped transport exception.
+- Protocol response that completes before remote close, remote fault, or local
+  endpoint disposal keeps the successful response result.
+- Protocol error that completes before remote close, remote fault, or local
+  endpoint disposal keeps the protocol error result.
+- Stream end that completes before remote close, remote fault, or local endpoint
+  disposal keeps the stream completion result.
 - A closed-event user listener throwing does not prevent pending unary invokes
   from faulting.
 - A closed-event user listener throwing does not prevent active stream async
