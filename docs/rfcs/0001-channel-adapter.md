@@ -68,14 +68,15 @@ using Eventa.Adapters.Channels;
 
 using var pipe = new ChannelPipe();
 
-IEventContext left = pipe.Left.Context;
-IEventContext right = pipe.Right.Context;
+IEventContext left = pipe.Left;
+IEventContext right = pipe.Right;
 ```
 
 Use a custom channel endpoint:
 
 ```csharp
 using System.Threading.Channels;
+using Eventa;
 using Eventa.Adapters.Channels;
 
 var inbound = Channel.CreateUnbounded<ChannelMessage>();
@@ -89,7 +90,7 @@ using var endpoint = new ChannelEndpoint(
         CompleteOutboundOnDispose = true,
     });
 
-var context = endpoint.Context;
+IEventContext context = endpoint;
 ```
 
 Recommended public channel types:
@@ -106,10 +107,8 @@ public sealed class ChannelPipe : IDisposable
     public void Dispose();
 }
 
-public sealed class ChannelEndpoint : IDisposable
+public sealed class ChannelEndpoint : IEventContext
 {
-    public IEventContext Context { get; }
-
     public ChannelEndpoint(
         ChannelReader<ChannelMessage> inbound,
         ChannelWriter<ChannelMessage> outbound,
@@ -174,9 +173,9 @@ public interface IEventInboundDispatcher
 ```
 
 `EventContext` should implement both `IEventContext` and
-`IEventInboundDispatcher`. `ChannelEndpoint.Context` remains typed as
-`IEventContext`; the endpoint keeps its own `IEventInboundDispatcher` reference
-for the inbound pump.
+`IEventInboundDispatcher`. `ChannelEndpoint` implements `IEventContext` by
+forwarding context operations to an owned `EventContext`; the endpoint keeps its
+own `IEventInboundDispatcher` reference for the inbound pump.
 
 ## Internal Architecture
 
@@ -184,7 +183,7 @@ for the inbound pump.
 directions:
 
 ```text
-Left.Context
+Left
   Emit
     -> local dispatch
     -> ChannelAdapter.OnSent
@@ -193,14 +192,14 @@ Left.Context
     -> Right inboundDispatcher.Receive
     -> right local dispatch + OnReceived only
 
-Right.Context follows the same path through rightToLeft.
+Right follows the same path through rightToLeft.
 ```
 
 `ChannelEndpoint` owns:
 
 - one inbound `ChannelReader<ChannelMessage>`
 - one outbound `ChannelWriter<ChannelMessage>`
-- one `EventContext` exposed as `IEventContext`
+- one owned `EventContext` used to implement `IEventContext`
 - one `IEventInboundDispatcher` reference for remote input
 - one private `ChannelAdapter`
 - one background inbound pump task
@@ -469,8 +468,8 @@ Core inbound dispatch tests:
 
 Channel adapter tests:
 
-- Ordinary event emitted on `Left.Context` is received by `Right.Context`.
-- Unary invoke client on left can call handler registered on right.
+- Ordinary event emitted on `Left` is received by `Right`.
+- Unary invoke client on `Left` can call handler registered on `Right`.
 - Request-stream unary invoke crosses the pipe.
 - Server-streaming invoke crosses the pipe.
 - Bidirectional streaming invoke crosses the pipe.
@@ -527,9 +526,9 @@ prefer the constructor-first pair:
 ```csharp
 using var pipe = new ChannelPipe();
 
-using var handler = pipe.Right.Context.RegisterInvokeHandler(echo, HandleEcho);
+using var registration = pipe.Right.RegisterInvokeHandler(echo, HandleEcho);
 
-var client = pipe.Left.Context.CreateInvokeClient(echo);
+var client = pipe.Left.CreateInvokeClient(echo);
 var response = await client.InvokeAsync(new EchoRequest("eventa"));
 ```
 
