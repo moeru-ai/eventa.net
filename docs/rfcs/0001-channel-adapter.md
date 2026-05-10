@@ -72,6 +72,12 @@ IEventContext left = pipe.Left;
 IEventContext right = pipe.Right;
 ```
 
+`ChannelPipe` is the owner for the connected pair. `Left` and `Right` are
+symmetric endpoint objects, and each `ChannelEndpoint` is directly usable as an
+`IEventContext`. This follows the .NET pattern where a connection-facing object
+can own transport state and lifecycle while also exposing the primary operations
+for that endpoint.
+
 Use a custom channel endpoint:
 
 ```csharp
@@ -205,6 +211,11 @@ Right follows the same path through rightToLeft.
 - one background inbound pump task
 - one cancellation source for endpoint disposal
 
+`ChannelEndpoint` intentionally keeps transport lifecycle outside the owned
+`EventContext`. It forwards `IEventContext` operations to that context, but
+endpoint disposal, inbound-pump cancellation, channel completion, and transport
+fatal notification remain endpoint responsibilities.
+
 `ChannelAdapter` implements `IEventaAdapter`:
 
 - `OnSent` writes `ChannelMessage(envelope, options)` to the outbound writer.
@@ -262,6 +273,12 @@ that validates and dispatches an already-created boxed envelope.
 package. The adapter project should set `IsAotCompatible=true`, and the core
 changes required by this RFC must continue to build cleanly with trim and AOT
 analyzers enabled.
+
+The forbidden APIs below are excluded because trim and AOT analysis cannot
+reliably preserve runtime reflection, runtime generic construction, runtime
+activation, or dynamic dispatch. The inbound dispatch design should expose the
+needed typed delegates ahead of time instead of reconstructing type-specific
+behavior at runtime.
 
 The boxed inbound dispatch path must be implemented without:
 
@@ -538,6 +555,41 @@ network behavior should wait for WebSocket or SignalR adapters.
 Document that default `ChannelPipe` channels are unbounded and are intended for
 local composition, tests, and same-process boundaries, not as a throughput or
 backpressure policy.
+
+## References
+
+API shape:
+
+- [ASP.NET Core `ConnectionContext`](https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.connections.connectioncontext?view=aspnetcore-10.0):
+  a connection-facing object encapsulates an individual connection, transport,
+  lifecycle, and extension points. This supports making `ChannelEndpoint`
+  directly implement `IEventContext` instead of exposing a nested `.Context`
+  property.
+- [System.IO.Pipelines `IDuplexPipe`](https://learn.microsoft.com/en-us/dotnet/standard/io/pipelines#iduplexpipe):
+  `IDuplexPipe` represents one side of a full-duplex connection. This supports
+  `ChannelPipe.Left` and `ChannelPipe.Right` as symmetric endpoint sides rather
+  than client/server roles.
+
+AOT compatibility:
+
+- [.NET Native AOT compatibility analyzers](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/#aot-compatibility-analyzers):
+  `IsAotCompatible=true` enables trim, single-file, and AOT analyzers for
+  libraries.
+- [Introduction to AOT warnings](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/fixing-warnings):
+  reflection and runtime code generation can be incompatible with Native AOT;
+  avoiding those calls is the preferred design.
+- [Fixing trim warnings](https://learn.microsoft.com/en-us/dotnet/core/deploying/trimming/fixing-warnings):
+  the first recommended approach is eliminating reflection; source generators
+  are recommended for common reflection scenarios.
+- [`MethodInfo.MakeGenericMethod`](https://learn.microsoft.com/en-us/dotnet/api/system.reflection.methodinfo.makegenericmethod?view=net-10.0):
+  annotated with `RequiresDynamicCode` and `RequiresUnreferencedCode`, which is
+  why the boxed dispatch path forbids runtime generic method construction.
+- [`Activator.CreateInstance`](https://learn.microsoft.com/en-us/dotnet/api/system.activator.createinstance?view=net-10.0):
+  some overloads are annotated with `RequiresUnreferencedCode`, which is why the
+  adapter avoids runtime activation.
+- [System.Text.Json source generation](https://learn.microsoft.com/en-us/dotnet/standard/serialization/system-text-json/source-generation):
+  reflection-based serialization can break Native AOT apps; source generation is
+  the intended AOT-friendly direction for future serializer work.
 
 ## Alternatives Considered
 
