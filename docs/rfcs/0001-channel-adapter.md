@@ -2,7 +2,7 @@
 
 Status: proposed
 
-Last reviewed: 2026-05-09
+Last reviewed: 2026-05-10
 
 ## Summary
 
@@ -25,9 +25,9 @@ for a real transport:
 - Calling the normal `Emit` path for remote input would notify `OnSent` again
   and can create an echo loop.
 
-Because adapter packages are intended to live outside the core package, the
-inbound dispatch surface must be a public core abstraction. Channel adapters
-must not depend on `EventContext` internals.
+Because adapter packages are intended to live outside the core package, inbound
+dispatch and transport fatal notification surfaces must be public core
+abstractions. Channel adapters must not depend on `EventContext` internals.
 
 ## Goals
 
@@ -51,6 +51,20 @@ must not depend on `EventContext` internals.
 - No `Client` / `Server` naming for the in-memory pair.
 - No high-throughput backpressure guarantee in the default `ChannelPipe`.
 - No reflection-based serializer or dynamic dispatch path.
+
+## Requirement Layers
+
+This RFC is intentionally a single-file audit ledger. Requirements are layered
+so the primary contract remains readable while edge-case decisions stay
+recorded:
+
+- **Must**: public API and behavior required for v1.
+- **Should**: preferred behavior that keeps v1 extensible without overfitting
+  the implementation.
+- **Audit Notes**: race, ordering, and negative-space decisions captured to
+  prevent regressions or contradictory future edits.
+- **Test Matrix**: grouped acceptance coverage; individual test names may be
+  more granular in the implementation.
 
 ## Public API
 
@@ -108,7 +122,7 @@ public sealed class ChannelPipe : IDisposable
 
     public ChannelEndpoint Right { get; }
 
-    public ChannelPipe(ChannelEndpointOptions? options = null);
+    public ChannelPipe(ChannelPipeOptions? options = null);
 
     public void Dispose();
 }
@@ -128,6 +142,12 @@ public sealed class ChannelEndpoint : IEventContext
 public sealed record ChannelMessage(
     IEventEnvelope Envelope,
     object? Options = null);
+
+public sealed class ChannelPipeOptions
+{
+    public EventDefinition<ChannelClosedPayload> ClosedEvent { get; init; }
+        = ChannelEvents.Closed;
+}
 
 public sealed class ChannelEndpointOptions
 {
@@ -153,11 +173,16 @@ public sealed class ChannelClosedException : Exception
 }
 ```
 
-`ChannelPipe` owns the internal channels that connect `Left` and `Right`; both
-pipe-created endpoints must complete their outbound writers on disposal so the
-paired endpoint observes channel completion. Custom `ChannelEndpoint` instances
-respect `CompleteOutboundOnDispose`; when it is `false`, disposing the endpoint
-does not complete an externally owned outbound writer.
+`ChannelPipe` owns the internal channels that connect `Left` and `Right`.
+Pipe-created endpoints always own their internal outbound writers and complete
+them on disposal so the paired endpoint observes channel completion. This writer
+ownership is not configurable through `ChannelPipeOptions`. `ChannelPipeOptions`
+applies `ClosedEvent` symmetrically to both pipe-created endpoints, `Left` and
+`Right`.
+
+Custom `ChannelEndpoint` instances respect `CompleteOutboundOnDispose`; when it
+is `true`, disposal completes the externally supplied outbound writer, and when
+it is `false`, writer completion is left to the external owner.
 
 Recommended new core transport-facing abstractions:
 
@@ -184,12 +209,18 @@ public interface IEventInboundDispatcher
 {
     void Receive(IEventEnvelope envelope, object? options = null);
 }
+
+public interface IEventTransportFatalNotifier
+{
+    void NotifyTransportFatal(Exception error);
+}
 ```
 
-`EventContext` should implement both `IEventContext` and
-`IEventInboundDispatcher`. `ChannelEndpoint` implements `IEventContext` by
+`EventContext` should implement `IEventContext`, `IEventInboundDispatcher`, and
+`IEventTransportFatalNotifier`. `ChannelEndpoint` implements `IEventContext` by
 forwarding context operations to an owned `EventContext`; the endpoint keeps its
-own `IEventInboundDispatcher` reference for the inbound pump.
+own `IEventInboundDispatcher` reference for the inbound pump and its own
+`IEventTransportFatalNotifier` reference for terminal transport notification.
 
 ## Internal Architecture
 
@@ -215,6 +246,7 @@ Right follows the same path through rightToLeft.
 - one outbound `ChannelWriter<ChannelMessage>`
 - one owned `EventContext` used to implement `IEventContext`
 - one `IEventInboundDispatcher` reference for remote input
+- one `IEventTransportFatalNotifier` reference for transport fatal notification
 - one private `ChannelAdapter`
 - one background inbound pump task
 - one cancellation source for endpoint disposal
@@ -242,18 +274,22 @@ await foreach (var message in inbound.ReadAllAsync(cancellationToken))
 
 `ChannelEndpoint` also uses a deterministic transport fatal notification path
 for channel close, channel fault, and local endpoint disposal. This path must
-notify invoke internals directly before the public closed event is dispatched.
-It must not depend on normal closed-event listener enumeration order.
+notify invoke session infrastructure directly before the public closed event is
+dispatched. It must not depend on normal closed-event listener enumeration
+order.
 
 The fatal mapping should preserve `ChannelClosedPayload.Error` when present and
 otherwise use a `ChannelClosedException`.
+
+`IEventInboundDispatcher` handles successful inbound envelopes.
+`IEventTransportFatalNotifier` handles terminal transport failure.
 
 ## Core Inbound Dispatch Requirement
 
 The core package must expose `IEventInboundDispatcher.Receive`. It is the stable
 package boundary used by external adapter packages.
 
-Required behavior:
+### Must
 
 - Dispatch from the existing `IEventEnvelope` instance without constructing a
   new envelope.
@@ -270,10 +306,46 @@ Required behavior:
 - Reject envelopes whose runtime shape cannot be used as
   `EventEnvelope<TPayload>` for the selected payload type.
 
+### Audit Notes
+
 This requires a new boxed dispatch primitive below `EventContext`. The current
 `EventListenerStore.CreateDispatchSnapshot<TPayload>` constructs a new
 `EventEnvelope<TPayload>` from a payload; remote input needs a sibling primitive
 that validates and dispatches an already-created boxed envelope.
+
+## Core Transport Fatal Notification Requirement
+
+The core package must expose
+`IEventTransportFatalNotifier.NotifyTransportFatal`. It is the stable public
+package boundary used by external adapter packages to fault invoke sessions when
+the transport becomes terminal.
+
+The notifier is not responsible for public closed-event dispatch. It faults
+pending unary and active stream sessions only; `ChannelEndpoint` owns the
+best-effort public closed event after notifier delivery.
+
+### Must
+
+- Accept the adapter-mapped terminal exception.
+- Notify pending unary invoke sessions directly.
+- Notify active stream invoke sessions directly and surface the same exception
+  through their async enumerables.
+- Preserve the per-session first-wins rule.
+- Never call user `Emit`, direct listeners, match listeners, registered
+  `RegisterAbortEvent` fatal-event subscriptions, or the configured public
+  closed event.
+- Never depend on listener enumeration order.
+
+### Should
+
+- Remain transport-generic core/invoke infrastructure that channel, WebSocket,
+  and SignalR adapters can reuse.
+
+### Audit Notes
+
+This separates deterministic session failure from ordinary event observation.
+The public closed event remains observable, but it is endpoint-owned and runs
+after the notifier.
 
 ## AOT Compatibility
 
@@ -333,10 +405,13 @@ require any built-in option type.
 Channel close, channel fault, and local endpoint disposal are transport fatal
 conditions.
 
-When an endpoint observes a transport fatal condition:
+### Must
+
+When an endpoint observes a transport fatal condition, it must:
 
 - enter terminal state
-- notify invoke internals through the deterministic transport fatal path
+- notify invoke session infrastructure through the deterministic transport fatal
+  path
 - fault pending unary invoke sessions before public closed-event listeners run
 - fault active stream invoke sessions before public closed-event listeners run
 - surface the same exception through stream async enumeration
@@ -344,45 +419,47 @@ When an endpoint observes a transport fatal condition:
 - do not emit client abort protocol events, because the failure did not come
   from local cancellation or consumer disposal
 
-This requires stream invoke sessions to observe fatal transport events. The
-current stream behavior that ignores fatal abort registrations is not compatible
-with this adapter's v1 streaming scope.
+`ChannelEndpoint` owns the public closed event. The notifier only faults
+sessions; endpoint terminal handling dispatches the configured closed event
+after notifier delivery.
 
-Normal channel completion should map to a `ChannelClosedException`. Local
-endpoint disposal should map to
-`ChannelClosedException("Channel endpoint disposed.")`. Faulted channel
-completion should preserve the original channel exception, wrapping it only when
-a public `ChannelClosedException` is needed to add context. If a faulted
-completion is wrapped, the original exception must be exposed as the wrapper's
-`InnerException`.
+### Should
 
-Endpoint terminal cause precedence is first terminal cause wins. The first
-remote close, remote fault, local endpoint disposal, malformed or null envelope,
-inbound dispatch rejection, or inbound listener exception that moves the endpoint
-into terminal state determines the mapped fatal exception,
-`ChannelClosedPayload.Error`, and cleanup sequence. Later terminal causes are
-ignored for public closed-event dispatch and invoke or stream fatal notification.
+- Normal channel completion maps to a `ChannelClosedException`.
+- Local endpoint disposal maps to
+  `ChannelClosedException("Channel endpoint disposed.")`.
+- Faulted channel completion preserves the original channel exception, wrapping
+  it only when a public `ChannelClosedException` is needed to add context. When
+  wrapped, the original exception is exposed as `InnerException`.
 
-Terminal result precedence is first terminal result wins for every transport
-fatal condition. The endpoint first-wins rule selects the transport fatal
-exception; the session first-wins rule decides whether that exception can still
-fault each pending unary or stream session. If per-call cancellation, a protocol
-response, a protocol error, or a stream end has already completed a unary or
-stream session, transport fatal notification must not rewrite that result.
-Otherwise channel close, channel fault, local endpoint disposal, malformed input,
-or inbound listener failure faults the session with the mapped transport
-exception.
+### Audit Notes
+
+- Stream invoke sessions must observe fatal transport events. The current stream
+  behavior that ignores fatal abort registrations is not compatible with this
+  adapter's v1 streaming scope.
+- Endpoint terminal cause precedence is first terminal cause wins. The first
+  remote close, remote fault, local endpoint disposal, malformed or null
+  envelope, inbound dispatch rejection, or inbound listener exception determines
+  the mapped fatal exception, `ChannelClosedPayload.Error`, and cleanup sequence.
+- Later terminal causes are ignored for public closed-event dispatch and invoke
+  or stream fatal notification.
+- Session result precedence is first terminal result wins. If per-call
+  cancellation, a protocol response, a protocol error, or a stream end has
+  already completed a unary or stream session, transport fatal notification must
+  not rewrite that result. Otherwise the mapped transport exception faults the
+  session.
 
 The deterministic transport fatal path is not normal event dispatch. It must not
 rely on `HashSet` listener order, arbitrary user callbacks, or public
-closed-event listener enumeration. The existing `RegisterAbortEvent` public API
-can continue to exist, but the channel adapter needs a lower-level core helper
-or invoke-internal hook that can notify pending unary and active stream sessions
-directly. That helper or hook must be transport-generic core/invoke
-infrastructure, not a channel-specific patch, so later WebSocket or SignalR
-adapters can reuse the same fatal path.
+closed-event listener enumeration. The channel adapter calls the public
+`IEventTransportFatalNotifier.NotifyTransportFatal` boundary with the mapped
+terminal exception. The existing `RegisterAbortEvent` public API can continue to
+exist for ordinary fatal-event observation, but it is not the deterministic
+transport fatal delivery path.
 
 ## Lifecycle
+
+### Must
 
 `ChannelPipe.Dispose()`:
 
@@ -410,15 +487,16 @@ adapters can reuse the same fatal path.
   cancellation, deterministic transport fatal notification, closed-event
   dispatch, and owned `EventContext` disposal at most once
 
-Ordering rule:
+Ordering:
 
-Deterministic transport fatal notification must run before public closed-event
-dispatch and before `EventContext.Dispose()` clears listeners. Public
-closed-event listener failures must not prevent pending unary or active stream
-sessions from faulting. Thread safety must not weaken this ordering: the winning
-disposer runs the sequence, and concurrent disposers observe completion or no-op.
+- Deterministic transport fatal notification must run before public closed-event
+  dispatch and before `EventContext.Dispose()` clears listeners.
+- Public closed-event listener failures must not prevent pending unary or active
+  stream sessions from faulting.
+- Thread safety must not weaken this ordering: the winning disposer runs the
+  sequence, and concurrent disposers observe completion or no-op.
 
-For a remote close or fault, the receiving endpoint's inbound pump should:
+For a remote close or fault, the receiving endpoint's inbound pump must:
 
 1. stop reading further messages
 2. enter terminal state
@@ -427,7 +505,7 @@ For a remote close or fault, the receiving endpoint's inbound pump should:
 4. best-effort dispatch the configured closed event through inbound dispatch
 5. dispose endpoint resources
 
-For local endpoint disposal, the endpoint should:
+For local endpoint disposal, the endpoint must:
 
 1. stop local outbound writes
 2. complete outbound when configured to own completion
@@ -446,23 +524,26 @@ Terminal result precedence follows the transport-wide first-wins rule above.
 Otherwise local endpoint disposal faults the session with
 `ChannelClosedException("Channel endpoint disposed.")`.
 
+### Should
+
 When outbound completion is owned, or when the external owner completes or faults
 the writer, the paired endpoint observes disposal through channel completion and
 uses the remote close or fault sequence above. If `CompleteOutboundOnDispose` is
 `false` and no external completion or fault occurs, the paired endpoint is not
 guaranteed to observe local endpoint disposal.
 
-Post-terminal user `IEventContext` operations:
+### Audit Notes
+
+Post-terminal user `IEventContext` operations are an audit contract, not the
+primary API story:
 
 - User-initiated `Emit`, `Subscribe`, `SubscribeOnce`, `Unsubscribe`, invoke
   handler registration, and stream handler registration after endpoint terminal
-  transition must fail fast with `ObjectDisposedException` or
-  `ChannelClosedException`.
+  transition must fail fast with `ChannelClosedException`.
 - `CreateInvokeClient` and `CreateInvokeStreamClient` remain pure reusable client
   factories and may succeed after endpoint terminal transition. The first unary
   or stream invoke use against a terminal endpoint must fail fast with
-  `ObjectDisposedException` or `ChannelClosedException`, before local dispatch or
-  outbound channel writes.
+  `ChannelClosedException`, before local dispatch or outbound channel writes.
 - User-initiated `Emit` after endpoint terminal transition must not run local
   listener dispatch and must not write to the outbound channel.
 - Internal deterministic fatal notification and public closed-event dispatch are
@@ -471,10 +552,15 @@ Post-terminal user `IEventContext` operations:
 
 ## Error Handling
 
+### Must
+
 Outbound write failure:
 
-- If `OnSent` cannot write because the channel is closed, it should throw the
-  channel write exception to the local `Emit` caller.
+- If `OnSent` cannot write because the underlying `System.Threading.Channels`
+  writer is closed or faulted, it should propagate that writer failure unchanged
+  to the local `Emit` caller. This is distinct from the adapter
+  `ChannelClosedException` used for mapped terminal state and post-terminal user
+  operations.
 - Invoke clients should surface this as a local send failure, consistent with
   existing invoke session send-fault behavior.
 
@@ -500,7 +586,7 @@ Inbound listener exception:
   additional closed event is attempted. Pending unary and active stream sessions
   must already have been faulted before any public closed-event listener runs.
 
-Endpoint disposal:
+### Audit Notes
 
 - Disposal is not considered a malformed message.
 - Disposal should stop the inbound pump and optionally complete outbound.
@@ -515,106 +601,50 @@ The v1 API does not promise high-throughput backpressure behavior. Bounded
 channels and explicit write-pressure options can be added later without changing
 the constructor-first shape.
 
-## Testing
+## Test Matrix
 
-Core inbound dispatch tests:
+The RFC keeps test coverage grouped by behavior. Implementation may split these
+rows into smaller test cases when that improves diagnostics.
 
-- Remote receive dispatches ordinary direct listeners.
-- Remote receive dispatches match-expression listeners.
-- Remote receive removes one-shot listeners before callback invocation.
-- Remote receive invokes `OnReceived`.
-- Remote receive does not invoke `OnSent`.
-- Remote receive rejects null envelopes.
-- Remote receive rejects mismatched envelope payload types.
-- Remote receive reuses the original envelope instance.
-- Boxed inbound dispatch does not use reflection or dynamic invocation.
-
-Channel adapter tests:
-
-- Ordinary event emitted on `Left` is received by `Right`.
-- Unary invoke client on `Left` can call handler registered on `Right`.
-- Request-stream unary invoke crosses the pipe.
-- Server-streaming invoke crosses the pipe.
-- Bidirectional streaming invoke crosses the pipe.
-- Remote inbound dispatch does not echo-loop between left and right.
-- Disposing `ChannelPipe` disposes both endpoints.
-- Disposing one endpoint stops its inbound loop.
-- Disposing one endpoint faults local pending unary invokes with
-  `ChannelClosedException("Channel endpoint disposed.")`.
-- Disposing one endpoint faults local active stream async enumerables with
-  `ChannelClosedException("Channel endpoint disposed.")`.
-- Local endpoint disposal runs deterministic transport fatal notification before
-  public closed-event dispatch and before context disposal clears listeners.
-- Local endpoint disposal does not emit invoke `SendAbort` protocol events.
-- Disposing a default `ChannelPipe` endpoint is observed by the paired endpoint
-  through channel completion.
-- Disposing a custom endpoint with `CompleteOutboundOnDispose=true` is observed by
-  the paired endpoint through channel completion.
-- Disposing a custom endpoint with `CompleteOutboundOnDispose=false` does not
-  promise paired endpoint observation until the external writer owner completes
-  or faults the writer.
-- Concurrent `ChannelPipe.Dispose()` calls dispose both endpoints once.
-- Concurrent `ChannelEndpoint.Dispose()` calls run endpoint terminal notification
-  once.
-- Concurrent `ChannelPipe.Dispose()` racing with `Left.Dispose()` or
-  `Right.Dispose()` does not double-notify and does not throw.
-- Disposing through `(IEventContext)pipe.Left` participates in the same
-  thread-safe disposal gate.
-- Concurrent disposal preserves ordering: deterministic transport fatal
-  notification runs before public closed-event dispatch, and public closed-event
-  dispatch runs before owned `EventContext` disposal.
-- Post-terminal user `Emit` fails fast without local dispatch or outbound write.
-- Post-terminal user `Subscribe`, `SubscribeOnce`, `Unsubscribe`, invoke handler
-  registration, and stream handler registration fail fast.
-- Post-terminal `CreateInvokeClient` and `CreateInvokeStreamClient` remain pure
-  factories and do not require terminal-state probing.
-- First unary invoke use after endpoint terminal transition fails fast before
-  local dispatch or outbound write.
-- First stream invoke use after endpoint terminal transition fails fast before
-  local dispatch or outbound write.
-- Remote fault racing local endpoint disposal exposes the winning terminal cause
-  consistently through `ChannelClosedPayload.Error` and invoke or stream fatal
-  notification.
-- Malformed inbound envelope racing inbound listener exception exposes only one
-  winning terminal cause.
-- Faulting one channel runs deterministic transport fatal notification before
-  public closed-event dispatch and before context disposal clears listeners.
-- Pending unary invoke faults when the channel closes or faults.
-- Active stream invoke faults its async enumerable when the channel closes or
-  faults.
-- Normal channel completion faults pending unary invokes and active stream async
-  enumerables with `ChannelClosedException`.
-- Faulted channel completion faults pending unary invokes and active stream async
-  enumerables with the original exception, or with a `ChannelClosedException`
-  whose `InnerException` is the original exception.
-- Per-call cancellation that completes before remote close, remote fault, or
-  local endpoint disposal keeps the existing cancellation result.
-- Transport fatal notification that completes before per-call cancellation faults
-  sessions with the mapped transport exception.
-- Protocol response that completes before remote close, remote fault, or local
-  endpoint disposal keeps the successful response result.
-- Protocol error that completes before remote close, remote fault, or local
-  endpoint disposal keeps the protocol error result.
-- Stream end that completes before remote close, remote fault, or local endpoint
-  disposal keeps the stream completion result.
-- A closed-event user listener throwing does not prevent pending unary invokes
-  from faulting.
-- A closed-event user listener throwing does not prevent active stream async
-  enumerables from faulting.
-- Multiple closed-event user listeners and `HashSet` ordering do not affect
-  invoke or stream termination.
-- The deterministic transport fatal helper or hook is named and documented as
-  transport-generic core/invoke infrastructure, not a `ChannelEndpoint`-specific
-  API.
-- The public closed event remains best-effort observable by ordinary
-  subscribers.
-- Malformed or null envelopes fault the endpoint.
-- Inbound listener exceptions fault the endpoint.
-- Default `ChannelPipe` uses unbounded channels and does not claim backpressure
-  guarantees.
-- `Eventa.Adapters.Channels` sets `IsAotCompatible=true`.
-- AOT/trim analyzer builds for core and channel adapter complete without IL
-  warnings.
+- Transport smoke: ordinary events, unary invoke, request-stream unary invoke,
+  server-streaming invoke, and bidirectional streaming invoke cross from `Left`
+  to `Right`.
+- Inbound dispatch: remote receive dispatches direct, match-expression, and
+  one-shot listeners; reuses the original envelope; calls `OnReceived`; never
+  calls `OnSent`; does not echo-loop; rejects null, mismatched, or invalid
+  envelope shapes.
+- Core boundaries: external adapter-facing code can use
+  `IEventInboundDispatcher` and `IEventTransportFatalNotifier` without core
+  internals; boxed inbound dispatch avoids reflection and dynamic invocation.
+- Fatal path: channel close, channel fault, local endpoint disposal, malformed
+  input, and inbound listener exceptions fault pending unary invokes and active
+  stream async enumerables through the deterministic notifier before public
+  closed-event dispatch or context disposal.
+- Fault mapping: normal completion and local disposal surface
+  `ChannelClosedException`; local disposal uses
+  `ChannelClosedException("Channel endpoint disposed.")`; faulted channels
+  preserve the original exception or wrap it with that exception as
+  `InnerException`.
+- Lifecycle: disposing one pipe-created endpoint completes its owned outbound
+  writer, so the paired endpoint observes channel completion; custom endpoint
+  disposal respects `CompleteOutboundOnDispose=true` and `false`; concurrent
+  disposal and disposal through `IEventContext` are idempotent, do not
+  double-notify, and stop inbound loops.
+- Post-terminal operations: user-initiated `Emit`, listener registration,
+  unsubscription, and handler registration fail fast with
+  `ChannelClosedException`; reusable invoke client factories may still be
+  created, but first invoke use fails fast before local dispatch or outbound
+  writes.
+- Race audit: endpoint terminal cause is first-wins; per-session result is
+  first-wins across transport fatal, cancellation, protocol response, protocol
+  error, and stream end.
+- Closed event: public closed event remains best-effort observable; closed-event
+  listener failures and listener ordering never affect invoke or stream
+  termination.
+- Backpressure and AOT: default `ChannelPipe` uses unbounded channels and makes
+  no high-throughput backpressure guarantee; `Eventa.Adapters.Channels` sets
+  `IsAotCompatible=true`; core and adapter AOT/trim analyzer builds complete
+  without IL warnings.
 
 ## Documentation
 
