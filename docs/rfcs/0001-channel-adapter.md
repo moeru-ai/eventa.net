@@ -115,6 +115,8 @@ public sealed class ChannelPipe : IDisposable
 
 public sealed class ChannelEndpoint : IEventContext
 {
+    // IEventContext members are forwarded to the owned EventContext.
+
     public ChannelEndpoint(
         ChannelReader<ChannelMessage> inbound,
         ChannelWriter<ChannelMessage> outbound,
@@ -370,7 +372,9 @@ adapters can reuse the same fatal path.
 
 - disposes `Left`
 - disposes `Right`
-- is idempotent
+- is idempotent and thread-safe under concurrent calls
+- does not double-run endpoint terminal work when `ChannelPipe.Dispose()`,
+  `Left.Dispose()`, and `Right.Dispose()` race with each other
 
 `ChannelEndpoint.Dispose()`:
 
@@ -382,15 +386,21 @@ adapters can reuse the same fatal path.
 - best-effort dispatches the configured closed event before disposing the context
 - disposes the owned `EventContext` only after transport-close notification has
   had a chance to reach local listeners
+- runs the same endpoint disposal path when disposed through the `IEventContext`
+  interface
 - does not block indefinitely waiting for remote code
-- is idempotent
+- is idempotent and thread-safe under concurrent calls
+- runs the terminal transition, outbound completion, inbound pump cancellation,
+  deterministic transport fatal notification, closed-event dispatch, and owned
+  `EventContext` disposal at most once
 
 Ordering rule:
 
 Deterministic transport fatal notification must run before public closed-event
 dispatch and before `EventContext.Dispose()` clears listeners. Public
 closed-event listener failures must not prevent pending unary or active stream
-sessions from faulting.
+sessions from faulting. Thread safety must not weaken this ordering: the winning
+disposer runs the sequence, and concurrent disposers observe completion or no-op.
 
 For a remote close or fault, the receiving endpoint's inbound pump should:
 
@@ -502,6 +512,16 @@ Channel adapter tests:
 - Local endpoint disposal does not emit invoke `SendAbort` protocol events.
 - The paired endpoint observes disposal through channel completion and applies
   the remote close or fault sequence.
+- Concurrent `ChannelPipe.Dispose()` calls dispose both endpoints once.
+- Concurrent `ChannelEndpoint.Dispose()` calls run endpoint terminal notification
+  once.
+- Concurrent `ChannelPipe.Dispose()` racing with `Left.Dispose()` or
+  `Right.Dispose()` does not double-notify and does not throw.
+- Disposing through `(IEventContext)pipe.Left` participates in the same
+  thread-safe disposal gate.
+- Concurrent disposal preserves ordering: deterministic transport fatal
+  notification runs before public closed-event dispatch, and public closed-event
+  dispatch runs before owned `EventContext` disposal.
 - Faulting one channel runs deterministic transport fatal notification before
   public closed-event dispatch and before context disposal clears listeners.
 - Pending unary invoke faults when the channel closes or faults.
