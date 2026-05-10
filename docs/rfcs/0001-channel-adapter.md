@@ -446,9 +446,14 @@ uses the remote close or fault sequence above.
 Post-terminal user `IEventContext` operations:
 
 - User-initiated `Emit`, `Subscribe`, `SubscribeOnce`, `Unsubscribe`, invoke
-  client creation, and invoke handler registration after endpoint terminal
+  handler registration, and stream handler registration after endpoint terminal
   transition must fail fast with `ObjectDisposedException` or
   `ChannelClosedException`.
+- `CreateInvokeClient` and `CreateInvokeStreamClient` remain pure reusable client
+  factories and may succeed after endpoint terminal transition. The first unary
+  or stream invoke use against a terminal endpoint must fail fast with
+  `ObjectDisposedException` or `ChannelClosedException`, before local dispatch or
+  outbound channel writes.
 - User-initiated `Emit` after endpoint terminal transition must not run local
   listener dispatch and must not write to the outbound channel.
 - Internal deterministic fatal notification and public closed-event dispatch are
@@ -545,8 +550,14 @@ Channel adapter tests:
   notification runs before public closed-event dispatch, and public closed-event
   dispatch runs before owned `EventContext` disposal.
 - Post-terminal user `Emit` fails fast without local dispatch or outbound write.
-- Post-terminal user `Subscribe`, `SubscribeOnce`, `Unsubscribe`, invoke client
-  creation, and invoke handler registration fail fast.
+- Post-terminal user `Subscribe`, `SubscribeOnce`, `Unsubscribe`, invoke handler
+  registration, and stream handler registration fail fast.
+- Post-terminal `CreateInvokeClient` and `CreateInvokeStreamClient` remain pure
+  factories and do not require terminal-state probing.
+- First unary invoke use after endpoint terminal transition fails fast before
+  local dispatch or outbound write.
+- First stream invoke use after endpoint terminal transition fails fast before
+  local dispatch or outbound write.
 - Remote fault racing local endpoint disposal exposes the winning terminal cause
   consistently through `ChannelClosedPayload.Error` and invoke or stream fatal
   notification.
