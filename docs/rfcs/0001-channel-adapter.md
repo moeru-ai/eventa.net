@@ -49,6 +49,7 @@ abstractions. Channel adapters must not depend on `EventContext` internals.
 - No dependency-injection or hosted-service API.
 - No static factory class as the primary public API.
 - No `Client` / `Server` naming for the in-memory pair.
+- No merger, multiplexer, router, hub, or broadcast API in v1.
 - No high-throughput backpressure guarantee in the default `ChannelPipe`.
 - No reflection-based serializer or dynamic dispatch path.
 
@@ -86,11 +87,12 @@ IEventContext left = pipe.Left;
 IEventContext right = pipe.Right;
 ```
 
-`ChannelPipe` is the owner for the connected pair. `Left` and `Right` are
-symmetric endpoint objects, and each `ChannelEndpoint` is directly usable as an
-`IEventContext`. This follows the .NET pattern where a connection-facing object
-can own transport state and lifecycle while also exposing the primary operations
-for that endpoint.
+`ChannelPipe` is the owner for one connected pair. `Left` and `Right` are the
+two symmetric endpoint objects of that pair, not a topology abstraction for
+fan-in, fan-out, routing, or broadcast. Each `ChannelEndpoint` is directly
+usable as an `IEventContext`. This follows the .NET pattern where a
+connection-facing object can own transport state and lifecycle while also
+exposing the primary operations for that endpoint.
 
 Use a custom channel endpoint:
 
@@ -722,6 +724,19 @@ application roles. `Left` and `Right` are role-neutral.
 
 Transport-specific adapters such as WebSocket or SignalR may use client/server
 terms later because those transports naturally expose those roles.
+
+### Routing, Merger, Multiplexer, and Broadcast API
+
+Deferred for v1. `ChannelPipe` is the minimal point-to-point full-duplex
+transport: one pair, two endpoints, and no routing policy.
+
+Fan-in, fan-out, multiplexing, and broadcast are composition layers above the
+pair transport. They need separate semantics for ordering, backpressure, loop
+prevention, endpoint identity, duplicate delivery, and failure fan-out. The
+custom `ChannelEndpoint(ChannelReader<ChannelMessage>,
+ChannelWriter<ChannelMessage>, ChannelEndpointOptions?)` constructor remains
+the low-level escape hatch for experiments or future APIs such as a
+`ChannelRouter`, `ChannelHub`, or broadcast adapter.
 
 ### Serialization in v1
 
