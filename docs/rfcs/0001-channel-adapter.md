@@ -64,8 +64,9 @@ recorded:
   the implementation.
 - **Audit Notes**: race, ordering, and negative-space decisions captured to
   prevent regressions or contradictory future edits.
-- **Test Matrix**: grouped acceptance coverage; individual test names may be
-  more granular in the implementation.
+- **Verification Criteria**: reviewer-facing acceptance coverage;
+  implementation may split criteria into smaller tests when that improves
+  diagnostics.
 
 ## Public API
 
@@ -603,10 +604,11 @@ The v1 API does not promise high-throughput backpressure behavior. Bounded
 channels and explicit write-pressure options can be added later without changing
 the constructor-first shape.
 
-## Test Matrix
+## Verification Criteria
 
-The RFC keeps test coverage grouped by behavior. Implementation may split these
-rows into smaller test cases when that improves diagnostics.
+The RFC keeps reviewer-facing verification criteria grouped by behavior.
+Implementation may split these rows into smaller test cases when that improves
+diagnostics.
 
 - Transport smoke: ordinary events, unary invoke, request-stream unary invoke,
   server-streaming invoke, and bidirectional streaming invoke cross from `Left`
@@ -647,6 +649,8 @@ rows into smaller test cases when that improves diagnostics.
   no high-throughput backpressure guarantee; `Eventa.Adapters.Channels` sets
   `IsAotCompatible=true`; core and adapter AOT/trim analyzer builds complete
   without IL warnings.
+- Documentation: README covers constructor-first pair usage, in-process
+  object-only scope, and unbounded-channel/backpressure limits.
 
 ## Documentation
 
