@@ -1,8 +1,12 @@
-# RFC 0001: Channel Adapter
+# RFC 1: Channel Adapter
 
 Status: proposed
 
-Last reviewed: 2026-05-10
+RFC PR: https://github.com/moeru-ai/eventa.net/pull/18
+
+Start date: 2026-05-09
+
+Last reviewed: 2026-05-16
 
 ## Summary
 
