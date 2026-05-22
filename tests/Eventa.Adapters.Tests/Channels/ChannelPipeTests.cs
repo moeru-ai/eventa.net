@@ -1,0 +1,264 @@
+using System.Runtime.CompilerServices;
+using System.Threading.Channels;
+
+using Eventa.Adapters.Channels;
+
+using ChannelClosedException = Eventa.Adapters.Channels.ChannelClosedException;
+
+namespace Eventa.Adapters.Tests.Channels;
+
+public class ChannelPipeTests
+{
+    [Fact]
+    public async Task Emit_ForwardsEventToPairedEndpoint()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new EventDefinition<TestPayload>("channel:event");
+        var received = new TaskCompletionSource<EventEnvelope<TestPayload>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = pipe.Right.Subscribe(definition, envelope => received.TrySetResult(envelope));
+
+        pipe.Left.Emit(definition, new TestPayload("hello"));
+
+        var envelope = await received.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Equal(new EventEnvelope<TestPayload>("channel:event", new TestPayload("hello")), envelope);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ForwardsUnaryInvokeAcrossPipe()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new InvokeEventDefinition<EchoResponse, EchoRequest>("channel:echo");
+
+        using var _ = pipe.Right.RegisterInvokeHandler(
+            definition,
+            static (request, _) => Task.FromResult(new EchoResponse(request.Value.ToUpperInvariant())));
+
+        var client = pipe.Left.CreateInvokeClient(definition);
+        var response = await client.InvokeAsync(new EchoRequest("eventa"), TestContext.Current.CancellationToken);
+
+        Assert.Equal(new EchoResponse("EVENTA"), response);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_ForwardsRequestStreamUnaryInvokeAcrossPipe()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new InvokeEventDefinition<int, int>("channel:sum");
+
+        using var _ = pipe.Right.RegisterInvokeHandler(
+            definition,
+            static async (request, cancellationToken) =>
+            {
+                var sum = 0;
+                await foreach (var value in request.WithCancellation(cancellationToken))
+                {
+                    sum += value;
+                }
+
+                return sum;
+            });
+
+        var client = pipe.Left.CreateInvokeClient(definition);
+        var response = await client.InvokeAsync(Numbers(1, 2, 3), TestContext.Current.CancellationToken);
+
+        Assert.Equal(6, response);
+    }
+
+    [Fact]
+    public async Task InvokeStreamAsync_ForwardsServerStreamAcrossPipe()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new InvokeEventDefinition<int, int>("channel:count");
+
+        using var _ = pipe.Right.RegisterStreamHandler(definition, CountAsync);
+
+        var client = pipe.Left.CreateInvokeStreamClient(definition);
+        var responses = await CollectAsync(client.InvokeAsync(3, TestContext.Current.CancellationToken));
+
+        Assert.Equal([1, 2, 3], responses);
+    }
+
+    [Fact]
+    public async Task InvokeStreamAsync_ForwardsBidirectionalStreamAcrossPipe()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new InvokeEventDefinition<int, int>("channel:bidi");
+
+        using var _ = pipe.Right.RegisterStreamHandler(definition, DoubleAsync);
+
+        var client = pipe.Left.CreateInvokeStreamClient(definition);
+        var responses = await CollectAsync(client.InvokeAsync(Numbers(1, 2, 3), TestContext.Current.CancellationToken));
+
+        Assert.Equal([2, 4, 6], responses);
+    }
+
+    private static async IAsyncEnumerable<int> DoubleAsync(
+        IAsyncEnumerable<int> request,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var value in request.WithCancellation(cancellationToken))
+        {
+            yield return value * 2;
+        }
+    }
+
+    [Fact]
+    public async Task Dispose_FaultsPendingUnaryInvokeBeforeClosedEvent()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new InvokeEventDefinition<string, string>("channel:dispose-pending");
+        var closedObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = pipe.Left.CreateInvokeClient(definition);
+        var pending = client.InvokeAsync("request", CancellationToken.None);
+
+        using var _ = pipe.Left.Subscribe(ChannelEvents.Closed, _ =>
+        {
+            if (pending.IsFaulted)
+            {
+                closedObserved.TrySetResult(true);
+            }
+            else
+            {
+                closedObserved.TrySetException(new InvalidOperationException("Closed event ran before invoke faulted."));
+            }
+        });
+
+        pipe.Left.Dispose();
+
+        var error = await Assert.ThrowsAsync<ChannelClosedException>(
+            async () => await pending.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        await closedObserved.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Channel endpoint disposed.", error.Message);
+    }
+
+    [Fact]
+    public void Emit_AfterEndpointDisposed_FailsFast()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new EventDefinition<TestPayload>("channel:closed");
+
+        pipe.Left.Dispose();
+
+        var error = Assert.Throws<ChannelClosedException>(() => pipe.Left.Emit(definition, new TestPayload("late")));
+        Assert.Equal("Channel endpoint disposed.", error.Message);
+    }
+
+    [Fact]
+    public async Task CustomEndpointDispose_WhenConfigured_CompletesOutboundForPairedEndpoint()
+    {
+        var leftToRight = Channel.CreateUnbounded<ChannelMessage>();
+        var rightToLeft = Channel.CreateUnbounded<ChannelMessage>();
+        using var left = new ChannelEndpoint(
+            rightToLeft.Reader,
+            leftToRight.Writer,
+            new ChannelEndpointOptions { CompleteOutboundOnDispose = true });
+        using var right = new ChannelEndpoint(leftToRight.Reader, rightToLeft.Writer);
+        var closed = new TaskCompletionSource<ChannelClosedPayload>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = right.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
+
+        left.Dispose();
+
+        var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var error = Assert.IsType<ChannelClosedException>(payload.Error);
+        Assert.Equal("Channel closed.", error.Message);
+    }
+
+    [Fact]
+    public async Task InboundNullEnvelope_FaultsEndpointAndEmitsClosedEvent()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
+        var closed = new TaskCompletionSource<ChannelClosedPayload>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
+
+        await inbound.Writer.WriteAsync(new ChannelMessage(null!), TestContext.Current.CancellationToken);
+
+        var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.IsType<InvalidOperationException>(payload.Error);
+    }
+
+    [Fact]
+    public async Task InboundListenerException_FaultsEndpointAndEmitsClosedEvent()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
+        var definition = new EventDefinition<TestPayload>("channel:listener-fault");
+        var expected = new InvalidOperationException("listener failed");
+        var closed = new TaskCompletionSource<ChannelClosedPayload>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = endpoint.Subscribe(definition, _ => throw expected);
+        using var __ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
+
+        await inbound.Writer.WriteAsync(
+            new ChannelMessage(new EventEnvelope<TestPayload>(definition.Id, new TestPayload("boom"))),
+            TestContext.Current.CancellationToken);
+
+        var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Same(expected, payload.Error);
+    }
+
+    [Fact]
+    public async Task FaultedInboundChannel_PreservesOriginalExceptionInClosedEvent()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
+        var expected = new InvalidOperationException("channel failed");
+        var closed = new TaskCompletionSource<ChannelClosedPayload>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
+
+        inbound.Writer.TryComplete(expected);
+
+        var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Same(expected, payload.Error);
+    }
+
+    private static async IAsyncEnumerable<int> CountAsync(
+        int count,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        for (var value = 1; value <= count; value++)
+        {
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return value;
+        }
+    }
+
+    private static async IAsyncEnumerable<int> Numbers(params int[] values)
+    {
+        foreach (var value in values)
+        {
+            await Task.Yield();
+            yield return value;
+        }
+    }
+
+    private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> source)
+    {
+        var results = new List<T>();
+
+        await foreach (var value in source.WithCancellation(TestContext.Current.CancellationToken))
+        {
+            results.Add(value);
+        }
+
+        return results;
+    }
+
+    private sealed record TestPayload(string Value);
+    private sealed record EchoRequest(string Value);
+    private sealed record EchoResponse(string Value);
+}

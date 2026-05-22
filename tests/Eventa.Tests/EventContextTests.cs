@@ -233,6 +233,7 @@ public class EventContextTests
     }
 
     [Fact]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "Keep handlers in variables so one subscription stays tied to one handler value.")]
     public void Unsubscribe_WithMatchExpressionAndHandler_RemovesOnlyTheRequestedListener()
     {
         var context = new EventContext();
@@ -332,6 +333,87 @@ public class EventContextTests
 
         Assert.Equal("boom", error.Message);
         Assert.Empty(calls);
+    }
+
+    [Fact]
+    public void Receive_DispatchesOriginalEnvelopeToDirectMatchAndOnceListeners_WithoutOnSent()
+    {
+        var calls = new List<string>();
+        using var adapter = new RecordingAdapter(calls);
+        using var context = new EventContext(adapter);
+        var inbound = Assert.IsType<IEventInboundDispatcher>(context, exactMatch: false);
+        var definition = new EventDefinition<TestPayload>("remote-event");
+        var expression = new MatchExpression<TestPayload>("remote-match", _ => true);
+        var envelope = new EventEnvelope<TestPayload>("remote-event", new TestPayload("remote"));
+        var directEnvelopes = new List<EventEnvelope<TestPayload>>();
+        var onceEnvelopes = new List<EventEnvelope<TestPayload>>();
+        var matchEnvelopes = new List<EventEnvelope<TestPayload>>();
+
+        using var _ = context.Subscribe(definition, directEnvelopes.Add);
+        using var __ = context.SubscribeOnce(definition, onceEnvelopes.Add);
+        using var ___ = context.Subscribe(expression, matchEnvelopes.Add);
+
+        inbound.Receive(envelope, new EmitOptions("remote"));
+        inbound.Receive(envelope, new EmitOptions("remote"));
+
+        Assert.Equal(2, directEnvelopes.Count);
+        Assert.Single(onceEnvelopes);
+        Assert.Equal(2, matchEnvelopes.Count);
+        Assert.All(directEnvelopes, received => Assert.Same(envelope, received));
+        Assert.All(onceEnvelopes, received => Assert.Same(envelope, received));
+        Assert.All(matchEnvelopes, received => Assert.Same(envelope, received));
+        Assert.Empty(adapter.SentCalls);
+        Assert.Equal(
+            [
+                "received:remote-event",
+                "received:remote-event",
+                "received:remote-match",
+                "received:remote-event",
+                "received:remote-match",
+            ],
+            calls);
+    }
+
+    [Fact]
+    public void Receive_WhenEnvelopePayloadTypeConflictsWithDirectBinding_ThrowsClearException()
+    {
+        using var context = new EventContext();
+        var inbound = Assert.IsType<IEventInboundDispatcher>(context, exactMatch: false);
+        var firstDefinition = new EventDefinition<FirstPayload>("shared-remote-event");
+        var secondEnvelope = new EventEnvelope<SecondPayload>("shared-remote-event", new SecondPayload(2));
+
+        using var _ = context.Subscribe(firstDefinition, _ => { });
+
+        var error = Assert.Throws<InvalidOperationException>(() => inbound.Receive(secondEnvelope));
+
+        AssertPayloadTypeInvariant(
+            error,
+            bindingTarget: nameof(EventDefinition<>),
+            id: "shared-remote-event",
+            boundType: typeof(FirstPayload),
+            currentType: typeof(SecondPayload),
+            operation: "Receive");
+    }
+
+    [Fact]
+    public void Receive_WhenEnvelopeRuntimeTypeDoesNotMatchPayloadType_ThrowsEventEnvelopeTypeMismatchException()
+    {
+        using var context = new EventContext();
+        var inbound = Assert.IsType<IEventInboundDispatcher>(context, exactMatch: false);
+        var definition = new EventDefinition<TestPayload>("bad-runtime-type-event");
+        var envelope = new TestEnvelope("bad-runtime-type-event", typeof(TestPayload), new TestPayload("bad"));
+
+        using var _ = context.Subscribe(definition, _ => { });
+
+        var error = Assert.Throws<EventEnvelopeTypeMismatchException>(() => inbound.Receive(envelope));
+
+        Assert.Contains(nameof(EventEnvelope<>), error.Message, StringComparison.Ordinal);
+        Assert.Contains("bad-runtime-type-event", error.Message, StringComparison.Ordinal);
+        Assert.Contains(typeof(TestPayload).ToString(), error.Message, StringComparison.Ordinal);
+        Assert.Equal("bad-runtime-type-event", error.EventId);
+        Assert.Equal(typeof(TestEnvelope), error.EnvelopeRuntimeType);
+        Assert.Equal(typeof(TestPayload), error.AdvertisedPayloadType);
+        Assert.Equal(typeof(TestPayload), error.ExpectedPayloadType);
     }
 
     [Fact]
@@ -577,6 +659,11 @@ public class EventContextTests
     private sealed record FirstPayload(string Value);
     private sealed record SecondPayload(int Value);
     private sealed record EmitOptions(string Source);
+    private sealed record TestEnvelope(
+        string EventId,
+        Type PayloadType,
+        object? UntypedBody) : IEventEnvelope;
+
     private sealed record AdapterSentCall(string EventId, object? Envelope, object? Options);
     private sealed record AdapterReceivedCall(string EventId, object? Envelope);
 
