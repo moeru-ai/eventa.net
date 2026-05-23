@@ -14,7 +14,10 @@ namespace Eventa;
 /// received envelopes without taking over the in-process dispatch path.
 /// </para>
 /// </remarks>
-public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
+public sealed class EventContext(IEventaAdapter? adapter = null) :
+    IEventContext,
+    IEventInboundDispatcher,
+    IEventTransportFatalNotifier
 {
     private readonly EventListenerStore _listeners = new();
 
@@ -112,6 +115,54 @@ public sealed class EventContext(IEventaAdapter? adapter = null) : IEventContext
         }
 
         Adapter?.OnSent(eventDefinition.Id, dispatch.Envelope, options);
+    }
+
+    /// <summary>
+    /// Dispatches a transport-originated envelope locally without notifying <see cref="IEventaAdapter.OnSent"/>.
+    /// </summary>
+    /// <param name="envelope">The already-created envelope to dispatch.</param>
+    /// <param name="options">Optional adapter metadata forwarded to <see cref="IEventaAdapter.OnReceived(string, object?, object?)"/>.</param>
+    public void Receive(IEventEnvelope envelope, object? options = null)
+    {
+        var dispatch = _listeners.CreateDispatchSnapshot(envelope, nameof(Receive));
+
+        foreach (var listener in dispatch.Listeners)
+        {
+            listener.Handler(dispatch.Envelope);
+            Adapter?.OnReceived(listener.EventId, dispatch.Envelope, options);
+        }
+
+        foreach (var listener in dispatch.OnceListeners)
+        {
+            listener.Handler(dispatch.Envelope);
+            Adapter?.OnReceived(listener.EventId, dispatch.Envelope, options);
+        }
+
+        foreach (var listener in dispatch.MatchedListeners)
+        {
+            listener.Handler(dispatch.Envelope);
+            Adapter?.OnReceived(listener.EventId, dispatch.Envelope, options);
+        }
+
+        foreach (var listener in dispatch.MatchedOnceListeners)
+        {
+            listener.Handler(dispatch.Envelope);
+            Adapter?.OnReceived(listener.EventId, dispatch.Envelope, options);
+        }
+    }
+
+    /// <summary>
+    /// Faults invoke sessions that are pending on this context because its transport terminated.
+    /// </summary>
+    /// <param name="error">The terminal transport error.</param>
+    public void NotifyTransportFatal(Exception error)
+    {
+        ArgumentNullException.ThrowIfNull(error);
+
+        if (this.TryGetFeature<InvokeInternalConfig>(InvokeExtensions.InternalInvokeConfigKey, out var internalConfig))
+        {
+            internalConfig.TransportFatalInvocations.Notify(error);
+        }
     }
 
     /// <summary>

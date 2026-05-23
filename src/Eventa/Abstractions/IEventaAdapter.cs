@@ -20,17 +20,24 @@ public interface IEventaAdapter : IDisposable
     void OnSent(string eventId, object? envelope, object? options = null);
 
     /// <summary>
-    /// Called after a local listener or match-expression subscription receives an emitted event.
-    /// The runtime value is the emitted <see cref="EventEnvelope{TPayload}"/>, exposed as <see cref="object"/> because
-    /// the adapter interface is non-generic.
+    /// Called after local listener dispatch completes for <see cref="IEventContext.Emit{TPayload}(EventDefinition{TPayload}, TPayload)"/>,
+    /// or after <see cref="IEventInboundDispatcher.Receive(IEventEnvelope, object?)"/> dispatches a transport-originated envelope.
     /// </summary>
     /// <param name="eventId">
     /// The listener key that received the event. This is the original event id for direct subscriptions, and can be a
     /// match-expression id for match listeners.
     /// </param>
     /// <param name="envelope">
-    /// The emitted <see cref="EventEnvelope{TPayload}"/> instance. When <paramref name="eventId"/> is a
-    /// match-expression id, inspect <c>envelope.EventId</c> to get the original event id.
+    /// The received envelope, exposed as <see cref="object"/> because the adapter interface is non-generic.
+    /// For local emit notifications (<paramref name="options"/> is <see langword="null"/>), the runtime value is the
+    /// emitted <see cref="EventEnvelope{TPayload}"/> instance. For transport-originated notifications, the runtime value
+    /// can be any <see cref="IEventEnvelope"/> implementation passed to <see cref="IEventInboundDispatcher.Receive(IEventEnvelope, object?)"/>.
+    /// When <paramref name="eventId"/> is a match-expression id, inspect <see cref="IEventEnvelope.EventId"/> on the
+    /// runtime envelope to get the original event id.
     /// </param>
-    void OnReceived(string eventId, object? envelope);
+    /// <param name="options">
+    /// Optional metadata forwarded from <see cref="IEventInboundDispatcher.Receive(IEventEnvelope, object?)"/>, or
+    /// <see langword="null"/> for local emit notifications.
+    /// </param>
+    void OnReceived(string eventId, object? envelope, object? options = null);
 }

@@ -114,6 +114,55 @@ public class InvokeSessionEngineTests
         Assert.Equal(0, abortCount);
     }
 
+    [Fact]
+    public async Task NotifyTransportFatal_FaultsPendingUnaryInvokeWithoutEmittingAbort()
+    {
+        var context = new EventContext();
+        var notifier = Assert.IsType<IEventTransportFatalNotifier>(context, exactMatch: false);
+        var definition = new InvokeEventDefinition<int, int>("transport-fatal-unary");
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var abortCount = 0;
+        var expected = new InvalidOperationException("transport failed");
+
+        using var _ = context.Subscribe(sendAbortEvent, _ => abortCount++);
+
+        var client = context.CreateInvokeClient(definition);
+        var pending = client.InvokeAsync(1, CancellationToken.None);
+
+        notifier.NotifyTransportFatal(expected);
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await pending.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+
+        Assert.Same(expected, actual);
+        Assert.Equal(0, abortCount);
+    }
+
+    [Fact]
+    public async Task NotifyTransportFatal_FaultsActiveStreamInvokeWithoutEmittingAbort()
+    {
+        var context = new EventContext();
+        var notifier = Assert.IsType<IEventTransportFatalNotifier>(context, exactMatch: false);
+        var definition = new InvokeEventDefinition<int, int>("transport-fatal-stream");
+        var sendAbortEvent = new EventDefinition<AbortPayload>(definition.SendAbortId);
+        var abortCount = 0;
+        var expected = new InvalidOperationException("stream transport failed");
+
+        using var _ = context.Subscribe(sendAbortEvent, _ => abortCount++);
+
+        var client = context.CreateInvokeStreamClient(definition);
+        var stream = client.InvokeAsync(1, CancellationToken.None);
+        var pending = DrainAsync(stream);
+
+        notifier.NotifyTransportFatal(expected);
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await pending.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+
+        Assert.Same(expected, actual);
+        Assert.Equal(0, abortCount);
+    }
+
     private static async Task DrainAsync<T>(IAsyncEnumerable<T> stream)
     {
         await foreach (var _ in stream.WithCancellation(TestContext.Current.CancellationToken))

@@ -104,11 +104,20 @@ internal abstract class InvokeSessionEngine<TResponse, TRequest>(
             var subscription = new DeferredDisposable();
             _subscriptions.Add(subscription);
 
-            subscription.Attach(fatalEvent.Subscribe(Context, error =>
-            {
-                onError(error ?? CreateAbortException());
-            }));
+            subscription.Attach(fatalEvent.Subscribe(Context, error => onError(error ?? CreateAbortException())));
         }
+    }
+
+    /// <summary>
+    /// Subscribes the invoke session to deterministic transport-fatal notifications.
+    /// </summary>
+    /// <param name="onError">The callback that faults this session.</param>
+    protected void SubscribeToTransportFatal(Action<Exception> onError)
+    {
+        ArgumentNullException.ThrowIfNull(onError);
+
+        var internalConfig = Context.GetOrCreateFeature<InvokeInternalConfig>(InvokeExtensions.InternalInvokeConfigKey);
+        _subscriptions.Add(internalConfig.TransportFatalInvocations.Register(onError));
     }
 
     /// <summary>
@@ -246,6 +255,7 @@ internal sealed class UnaryInvokeSessionEngine<TResponse, TRequest>(
         SubscribeToReceive(CompleteSuccessfully);
         SubscribeToReceiveError(CompleteFaulted);
         SubscribeToFatalEvents(CompleteFaulted);
+        SubscribeToTransportFatal(CompleteFaulted);
         TryStart(AbortFromClient, CompleteFaulted);
         return _completion.Task;
     }
@@ -299,6 +309,7 @@ internal sealed class StreamInvokeSessionEngine<TResponse, TRequest>(
         SubscribeToReceive(response => _responses.TryWrite(response));
         SubscribeToReceiveError(Fault);
         SubscribeToReceiveStreamEnd(Complete);
+        SubscribeToTransportFatal(Fault);
 
         var isActive = TryStart(AbortFromClient, Fault);
         return CreateResultStream(isActive ? AbortOnDisposeAsync : NoopOnDisposeAsync);

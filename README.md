@@ -29,6 +29,7 @@ The C# implementation currently focuses on the core protocol layer:
 - request-stream to unary-response invokes
 - server-streaming and bidirectional streaming invokes
 - adapter observation hooks for send/receive activity
+- in-process channel adapter for connecting two contexts
 - fatal event and fatal match-expression hooks that abort pending invokes
 
 ## Features
@@ -43,6 +44,8 @@ The C# implementation currently focuses on the core protocol layer:
 - Cancellation through `CancellationToken`.
 - AOT-oriented API shape with explicit generic payload types.
 - Minimal adapter surface through `IEventaAdapter`.
+- Constructor-first `Eventa.Adapters.Channels` pair transport for same-process
+  object transport.
 
 ## Requirements
 
@@ -55,6 +58,7 @@ Eventa is available on NuGet:
 
 ```sh
 dotnet add package Eventa --prerelease
+dotnet add package Eventa.Adapters --prerelease
 ```
 
 Package page: <https://www.nuget.org/packages/Eventa/>
@@ -68,6 +72,7 @@ To run the repository examples locally:
 dotnet restore Eventa.slnx --locked-mode
 dotnet build Eventa.slnx --configuration Release --no-restore
 dotnet test --project tests/Eventa.Tests/Eventa.Tests.csproj --configuration Release --no-build
+dotnet test --project tests/Eventa.Adapters.Tests/Eventa.Adapters.Tests.csproj --configuration Release --no-build
 dotnet run --project examples/Eventa.Example/Eventa.Example.csproj --configuration Release --no-restore
 ```
 
@@ -171,13 +176,47 @@ Streaming invokes return `IAsyncEnumerable<TResponse>`. Handlers can be written
 as async iterators or adapted from callback-style code with
 `EventStream.ToStreamHandler`.
 
+## Channel Adapter Example
+
+```csharp
+using Eventa;
+using Eventa.Adapters.Channels;
+
+using var pipe = new ChannelPipe();
+
+var echo = new InvokeEventDefinition<EchoResponse, EchoRequest>("demo:channel:echo");
+
+using var handler = pipe.Right.RegisterInvokeHandler(
+    echo,
+    static (EchoRequest request, CancellationToken _) =>
+        Task.FromResult(new EchoResponse(request.Input.ToUpperInvariant())));
+
+var client = pipe.Left.CreateInvokeClient(echo);
+var response = await client.InvokeAsync(new EchoRequest("eventa"));
+
+Console.WriteLine(response.Output); // EVENTA
+
+public sealed record EchoRequest(string Input);
+
+public sealed record EchoResponse(string Output);
+```
+
+`ChannelPipe.Left` and `ChannelPipe.Right` are symmetric endpoints and each is
+usable as an `IEventContext`. The v1 channel adapter is in-process and
+object-only; it forwards existing typed envelopes through
+`System.Threading.Channels` and does not serialize payloads. Default
+`ChannelPipe` channels are unbounded and intended for local composition, tests,
+and same-process boundaries, not as a throughput or backpressure policy.
+
 ## Project Layout
 
 ```text
 .
 +-- Eventa.slnx
 +-- src/Eventa/                    # Core library
++-- src/Eventa.Adapters/           # Channel adapter library
 +-- tests/Eventa.Tests/            # xUnit v3 tests on Microsoft.Testing.Platform
++-- tests/Eventa.Adapters.Tests/   # Adapter integration tests
 +-- examples/Eventa.Example/       # Console examples
 +-- docs/                          # Design and compatibility notes
 ```
@@ -190,6 +229,7 @@ Useful commands:
 dotnet restore Eventa.slnx --locked-mode
 dotnet build Eventa.slnx --configuration Release --no-restore
 dotnet test --project tests/Eventa.Tests/Eventa.Tests.csproj --configuration Release --no-build
+dotnet test --project tests/Eventa.Adapters.Tests/Eventa.Adapters.Tests.csproj --configuration Release --no-build
 dotnet run --project examples/Eventa.Example/Eventa.Example.csproj --configuration Release --no-restore
 ```
 

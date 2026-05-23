@@ -72,6 +72,11 @@ internal sealed class InvokeInternalConfig
     /// Gets the fatal event or match-expression registrations that should abort pending invokes.
     /// </summary>
     public List<AbortEventRegistration> AbortOnEvents { get; } = [];
+
+    /// <summary>
+    /// Gets the transport-fatal callback registry for pending invokes on this context.
+    /// </summary>
+    public TransportFatalInvocationRegistry TransportFatalInvocations { get; } = new();
 }
 
 /// <summary>
@@ -122,4 +127,59 @@ internal enum AbortEventRegistrationKind
 {
     Event,
     MatchExpression,
+}
+
+/// <summary>
+/// Stores active invoke-session callbacks that should fault when the owning transport terminates.
+/// </summary>
+internal sealed class TransportFatalInvocationRegistry
+{
+    private readonly Lock _sync = new();
+    private readonly Dictionary<int, Action<Exception>> _callbacks = [];
+    private int _nextId;
+
+    /// <summary>
+    /// Registers one active invoke-session callback.
+    /// </summary>
+    /// <param name="onFatal">The callback to invoke when the transport terminates.</param>
+    /// <returns>A disposable that removes the callback.</returns>
+    public IDisposable Register(Action<Exception> onFatal)
+    {
+        ArgumentNullException.ThrowIfNull(onFatal);
+
+        int id;
+        lock (_sync)
+        {
+            id = ++_nextId;
+            _callbacks[id] = onFatal;
+        }
+
+        return new ActionDisposable(() =>
+        {
+            lock (_sync)
+            {
+                _callbacks.Remove(id);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Notifies every active invoke session of the terminal transport error.
+    /// </summary>
+    /// <param name="error">The terminal transport error.</param>
+    public void Notify(Exception error)
+    {
+        ArgumentNullException.ThrowIfNull(error);
+
+        List<Action<Exception>> callbacks;
+        lock (_sync)
+        {
+            callbacks = [.. _callbacks.Values];
+        }
+
+        foreach (var callback in callbacks)
+        {
+            callback(error);
+        }
+    }
 }
