@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 
@@ -147,6 +148,31 @@ public class ChannelPipeTests
     }
 
     [Fact]
+    public async Task Dispose_WhenCalled_ReleasesInboundPumpCancellationSource()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
+        var inboundPumpCancellation = GetInboundPumpCancellationSource(endpoint);
+
+        endpoint.Dispose();
+
+        await AssertEventuallyDisposedAsync(inboundPumpCancellation);
+    }
+
+    [Fact]
+    public async Task InboundChannelCompletion_WhenObserved_ReleasesInboundPumpCancellationSource()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
+        var inboundPumpCancellation = GetInboundPumpCancellationSource(endpoint);
+        var payload = await WaitForClosedAsync(endpoint, () => inbound.Writer.TryComplete());
+        Assert.IsType<ChannelClosedException>(payload.Error);
+        await AssertEventuallyDisposedAsync(inboundPumpCancellation);
+    }
+
+    [Fact]
     public void Emit_WhenOutboundWriterCompleted_ThrowsChannelClosedException()
     {
         var inbound = Channel.CreateUnbounded<ChannelMessage>();
@@ -193,14 +219,7 @@ public class ChannelPipeTests
             leftToRight.Writer,
             new ChannelEndpointOptions { CompleteOutboundOnDispose = true });
         using var right = new ChannelEndpoint(leftToRight.Reader, rightToLeft.Writer);
-        var closed = new TaskCompletionSource<ChannelClosedPayload>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        using var _ = right.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
-
-        left.Dispose();
-
-        var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var payload = await WaitForClosedAsync(right, left.Dispose);
         var error = Assert.IsType<ChannelClosedException>(payload.Error);
         Assert.Equal("Channel closed.", error.Message);
     }
@@ -211,14 +230,9 @@ public class ChannelPipeTests
         var inbound = Channel.CreateUnbounded<ChannelMessage>();
         var outbound = Channel.CreateUnbounded<ChannelMessage>();
         using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
-        var closed = new TaskCompletionSource<ChannelClosedPayload>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        using var _ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
-
-        await inbound.Writer.WriteAsync(new ChannelMessage(null), TestContext.Current.CancellationToken);
-
-        var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var payload = await WaitForClosedAsync(
+            endpoint,
+            async () => await inbound.Writer.WriteAsync(new ChannelMessage(null), TestContext.Current.CancellationToken));
         Assert.IsType<InvalidOperationException>(payload.Error);
     }
 
@@ -230,17 +244,7 @@ public class ChannelPipeTests
         using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
         var definition = new EventDefinition<TestPayload>("channel:listener-fault");
         var expected = new InvalidOperationException("listener failed");
-        var closed = new TaskCompletionSource<ChannelClosedPayload>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        using var _ = endpoint.Subscribe(definition, _ => throw expected);
-        using var __ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
-
-        await inbound.Writer.WriteAsync(
-            new ChannelMessage(new EventEnvelope<TestPayload>(definition.Id, new TestPayload("boom"))),
-            TestContext.Current.CancellationToken);
-
-        var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var payload = await TriggerInboundListenerFaultAsync(endpoint, inbound.Writer, definition, expected);
         Assert.Same(expected, payload.Error);
     }
 
@@ -250,15 +254,9 @@ public class ChannelPipeTests
         using var pipe = new ChannelPipe();
         var definition = new EventDefinition<TestPayload>("channel:paired-listener-fault");
         var expected = new InvalidOperationException("listener failed");
-        var closed = new TaskCompletionSource<ChannelClosedPayload>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
         using var _ = pipe.Right.Subscribe(definition, _ => throw expected);
-        using var __ = pipe.Left.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
 
-        pipe.Left.Emit(definition, new TestPayload("boom"));
-
-        var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var payload = await WaitForClosedAsync(pipe.Left, () => pipe.Left.Emit(definition, new TestPayload("boom")));
         Assert.Same(expected, payload.Error);
     }
 
@@ -290,16 +288,7 @@ public class ChannelPipeTests
         var faultingDefinition = new EventDefinition<TestPayload>("channel:listener-terminal-cause");
         var lateDefinition = new EventDefinition<TestPayload>("channel:late-after-listener-fault");
         var expected = new InvalidOperationException("listener failed");
-        var closed = new TaskCompletionSource<ChannelClosedPayload>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        using var _ = endpoint.Subscribe(faultingDefinition, _ => throw expected);
-        using var __ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
-
-        await inbound.Writer.WriteAsync(
-            new ChannelMessage(new EventEnvelope<TestPayload>(faultingDefinition.Id, new TestPayload("boom"))),
-            TestContext.Current.CancellationToken);
-        await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await TriggerInboundListenerFaultAsync(endpoint, inbound.Writer, faultingDefinition, expected);
 
         var error = Assert.Throws<ChannelClosedException>(() => endpoint.Emit(lateDefinition, new TestPayload("late")));
         Assert.Same(expected, error.InnerException);
@@ -314,16 +303,7 @@ public class ChannelPipeTests
         var faultingDefinition = new EventDefinition<TestPayload>("channel:listener-dispose-terminal-cause");
         var lateDefinition = new EventDefinition<TestPayload>("channel:late-after-dispose");
         var expected = new InvalidOperationException("listener failed");
-        var closed = new TaskCompletionSource<ChannelClosedPayload>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        using var _ = endpoint.Subscribe(faultingDefinition, _ => throw expected);
-        using var __ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
-
-        await inbound.Writer.WriteAsync(
-            new ChannelMessage(new EventEnvelope<TestPayload>(faultingDefinition.Id, new TestPayload("boom"))),
-            TestContext.Current.CancellationToken);
-        await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await TriggerInboundListenerFaultAsync(endpoint, inbound.Writer, faultingDefinition, expected);
 
         endpoint.Dispose();
 
@@ -338,14 +318,7 @@ public class ChannelPipeTests
         var outbound = Channel.CreateUnbounded<ChannelMessage>();
         using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
         var expected = new InvalidOperationException("channel failed");
-        var closed = new TaskCompletionSource<ChannelClosedPayload>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-
-        using var _ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
-
-        inbound.Writer.TryComplete(expected);
-
-        var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        var payload = await WaitForClosedAsync(endpoint, () => inbound.Writer.TryComplete(expected));
         Assert.Same(expected, payload.Error);
     }
 
@@ -368,6 +341,74 @@ public class ChannelPipeTests
             await Task.Yield();
             yield return value;
         }
+    }
+
+    private static Task<ChannelClosedPayload> WaitForClosedAsync(IEventContext context, Action trigger)
+    {
+        return WaitForClosedAsync(
+            context,
+            () =>
+            {
+                trigger();
+                return Task.CompletedTask;
+            });
+    }
+
+    private static async Task<ChannelClosedPayload> WaitForClosedAsync(IEventContext context, Func<Task> trigger)
+    {
+        var closed = new TaskCompletionSource<ChannelClosedPayload>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = context.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
+
+        await trigger();
+        return await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<ChannelClosedPayload> TriggerInboundListenerFaultAsync(
+        ChannelEndpoint endpoint,
+        ChannelWriter<ChannelMessage> inboundWriter,
+        EventDefinition<TestPayload> faultingDefinition,
+        Exception expected)
+    {
+        using var _ = endpoint.Subscribe(faultingDefinition, _ => throw expected);
+
+        return await WaitForClosedAsync(
+            endpoint,
+            async () => await inboundWriter.WriteAsync(
+                new ChannelMessage(new EventEnvelope<TestPayload>(faultingDefinition.Id, new TestPayload("boom"))),
+                TestContext.Current.CancellationToken));
+    }
+
+    private static CancellationTokenSource GetInboundPumpCancellationSource(ChannelEndpoint endpoint)
+    {
+        var field = typeof(ChannelEndpoint).GetField(
+            "_disposeCancellation",
+            BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("ChannelEndpoint no longer exposes _disposeCancellation.");
+
+        return Assert.IsType<CancellationTokenSource>(field.GetValue(endpoint));
+    }
+
+    private static async Task AssertEventuallyDisposedAsync(CancellationTokenSource source)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                _ = source.Token;
+            }
+            catch (ObjectDisposedException)
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(10), TestContext.Current.CancellationToken);
+        }
+
+        Assert.Throws<ObjectDisposedException>(() => _ = source.Token);
     }
 
     private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> source)

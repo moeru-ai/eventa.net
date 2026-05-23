@@ -148,6 +148,10 @@ public sealed class ChannelEndpoint : IEventContext
         {
             Terminate(error, completeOutbound: true, cancelInbound: false, outboundError: error);
         }
+        finally
+        {
+            _disposeCancellation.Dispose();
+        }
     }
 
     /// <summary>
