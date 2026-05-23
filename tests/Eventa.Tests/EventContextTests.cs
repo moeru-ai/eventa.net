@@ -375,6 +375,25 @@ public class EventContextTests
     }
 
     [Fact]
+    public void Receive_ForwardsOptionsToAdapterOnReceived()
+    {
+        var calls = new List<string>();
+        using var adapter = new RecordingAdapter(calls);
+        using var context = new EventContext(adapter);
+        var inbound = Assert.IsType<IEventInboundDispatcher>(context, exactMatch: false);
+        var definition = new EventDefinition<TestPayload>("remote-event-options");
+        var envelope = new EventEnvelope<TestPayload>("remote-event-options", new TestPayload("remote"));
+        var options = new EmitOptions("remote");
+
+        using var _ = context.Subscribe(definition, _ => { });
+
+        inbound.Receive(envelope, options);
+
+        var received = Assert.Single(adapter.ReceivedCalls);
+        Assert.Same(options, received.Options);
+    }
+
+    [Fact]
     public void Receive_WhenEnvelopePayloadTypeConflictsWithDirectBinding_ThrowsClearException()
     {
         using var context = new EventContext();
@@ -665,7 +684,7 @@ public class EventContextTests
         object? UntypedBody) : IEventEnvelope;
 
     private sealed record AdapterSentCall(string EventId, object? Envelope, object? Options);
-    private sealed record AdapterReceivedCall(string EventId, object? Envelope);
+    private sealed record AdapterReceivedCall(string EventId, object? Envelope, object? Options);
 
     private sealed class RecordingAdapter(List<string> calls) : IEventaAdapter
     {
@@ -679,9 +698,9 @@ public class EventContextTests
             calls.Add($"sent:{eventId}");
         }
 
-        public void OnReceived(string eventId, object? envelope)
+        public void OnReceived(string eventId, object? envelope, object? options = null)
         {
-            ReceivedCalls.Add(new AdapterReceivedCall(eventId, envelope));
+            ReceivedCalls.Add(new AdapterReceivedCall(eventId, envelope, options));
             calls.Add($"received:{eventId}");
         }
 

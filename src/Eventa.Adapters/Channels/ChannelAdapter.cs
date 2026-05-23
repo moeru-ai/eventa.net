@@ -25,14 +25,14 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
                 $"Event '{eventId}' was sent with an envelope that does not implement {nameof(IEventEnvelope)}.");
         }
 
-        outbound.WriteAsync(new ChannelMessage(eventEnvelope, options))
-            .AsTask()
-            .GetAwaiter()
-            .GetResult();
+        if (!outbound.TryWrite(new ChannelMessage(eventEnvelope, options)))
+        {
+            throw new ChannelClosedException("Channel endpoint closed.");
+        }
     }
 
     /// <inheritdoc />
-    public void OnReceived(string eventId, object? envelope) { }
+    public void OnReceived(string eventId, object? envelope, object? options = null) { }
 
     /// <inheritdoc />
     public void Dispose()

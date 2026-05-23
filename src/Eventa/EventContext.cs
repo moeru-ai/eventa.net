@@ -121,7 +121,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null) :
     /// Dispatches a transport-originated envelope locally without notifying <see cref="IEventaAdapter.OnSent"/>.
     /// </summary>
     /// <param name="envelope">The already-created envelope to dispatch.</param>
-    /// <param name="options">Optional adapter metadata associated with the received envelope.</param>
+    /// <param name="options">Optional adapter metadata forwarded to <see cref="IEventaAdapter.OnReceived(string, object?, object?)"/>.</param>
     public void Receive(IEventEnvelope envelope, object? options = null)
     {
         var dispatch = _listeners.CreateDispatchSnapshot(envelope, nameof(Receive));
@@ -129,25 +129,25 @@ public sealed class EventContext(IEventaAdapter? adapter = null) :
         foreach (var listener in dispatch.Listeners)
         {
             listener.Handler(dispatch.Envelope);
-            Adapter?.OnReceived(listener.EventId, dispatch.Envelope);
+            Adapter?.OnReceived(listener.EventId, dispatch.Envelope, options);
         }
 
         foreach (var listener in dispatch.OnceListeners)
         {
             listener.Handler(dispatch.Envelope);
-            Adapter?.OnReceived(listener.EventId, dispatch.Envelope);
+            Adapter?.OnReceived(listener.EventId, dispatch.Envelope, options);
         }
 
         foreach (var listener in dispatch.MatchedListeners)
         {
             listener.Handler(dispatch.Envelope);
-            Adapter?.OnReceived(listener.EventId, dispatch.Envelope);
+            Adapter?.OnReceived(listener.EventId, dispatch.Envelope, options);
         }
 
         foreach (var listener in dispatch.MatchedOnceListeners)
         {
             listener.Handler(dispatch.Envelope);
-            Adapter?.OnReceived(listener.EventId, dispatch.Envelope);
+            Adapter?.OnReceived(listener.EventId, dispatch.Envelope, options);
         }
     }
 

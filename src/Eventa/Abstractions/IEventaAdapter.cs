@@ -32,5 +32,9 @@ public interface IEventaAdapter : IDisposable
     /// The emitted <see cref="EventEnvelope{TPayload}"/> instance. When <paramref name="eventId"/> is a
     /// match-expression id, inspect <c>envelope.EventId</c> to get the original event id.
     /// </param>
-    void OnReceived(string eventId, object? envelope);
+    /// <param name="options">
+    /// Optional metadata forwarded from <see cref="IEventInboundDispatcher.Receive"/>, or <see langword="null"/>
+    /// for local emit notifications.
+    /// </param>
+    void OnReceived(string eventId, object? envelope, object? options = null);
 }

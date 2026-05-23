@@ -147,6 +147,43 @@ public class ChannelPipeTests
     }
 
     [Fact]
+    public void Emit_WhenOutboundWriterCompleted_ThrowsChannelClosedException()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
+        var definition = new EventDefinition<TestPayload>("channel:writer-completed");
+
+        outbound.Writer.TryComplete();
+
+        var error = Assert.Throws<ChannelClosedException>(() => endpoint.Emit(definition, new TestPayload("late")));
+        Assert.Equal("Channel endpoint closed.", error.Message);
+    }
+
+    [Fact]
+    public async Task Emit_WhenBoundedOutboundFull_ThrowsChannelClosedExceptionWithoutBlocking()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateBounded<ChannelMessage>(new BoundedChannelOptions(1)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+        });
+        using var endpoint = new ChannelEndpoint(
+            inbound.Reader,
+            outbound.Writer,
+            new ChannelEndpointOptions { CompleteOutboundOnDispose = true });
+        var definition = new EventDefinition<TestPayload>("channel:bounded-full");
+
+        endpoint.Emit(definition, new TestPayload("first"));
+        var secondEmit = Task.Run(
+            () => Assert.Throws<ChannelClosedException>(() => endpoint.Emit(definition, new TestPayload("second"))),
+            TestContext.Current.CancellationToken);
+
+        var error = await secondEmit.WaitAsync(TimeSpan.FromMilliseconds(250), TestContext.Current.CancellationToken);
+        Assert.Equal("Channel endpoint closed.", error.Message);
+    }
+
+    [Fact]
     public async Task CustomEndpointDispose_WhenConfigured_CompletesOutboundForPairedEndpoint()
     {
         var leftToRight = Channel.CreateUnbounded<ChannelMessage>();
@@ -179,7 +216,7 @@ public class ChannelPipeTests
 
         using var _ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
 
-        await inbound.Writer.WriteAsync(new ChannelMessage(null!), TestContext.Current.CancellationToken);
+        await inbound.Writer.WriteAsync(new ChannelMessage(null), TestContext.Current.CancellationToken);
 
         var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.IsType<InvalidOperationException>(payload.Error);
@@ -205,6 +242,30 @@ public class ChannelPipeTests
 
         var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         Assert.Same(expected, payload.Error);
+    }
+
+    [Fact]
+    public async Task Emit_AfterInboundListenerException_PreservesOriginalTerminalCause()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
+        var faultingDefinition = new EventDefinition<TestPayload>("channel:listener-terminal-cause");
+        var lateDefinition = new EventDefinition<TestPayload>("channel:late-after-listener-fault");
+        var expected = new InvalidOperationException("listener failed");
+        var closed = new TaskCompletionSource<ChannelClosedPayload>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = endpoint.Subscribe(faultingDefinition, _ => throw expected);
+        using var __ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
+
+        await inbound.Writer.WriteAsync(
+            new ChannelMessage(new EventEnvelope<TestPayload>(faultingDefinition.Id, new TestPayload("boom"))),
+            TestContext.Current.CancellationToken);
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        var error = Assert.Throws<ChannelClosedException>(() => endpoint.Emit(lateDefinition, new TestPayload("late")));
+        Assert.Same(expected, error.InnerException);
     }
 
     [Fact]

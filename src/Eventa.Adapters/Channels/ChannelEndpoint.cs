@@ -162,9 +162,11 @@ public sealed class ChannelEndpoint : IEventContext
         bool completeOutbound,
         bool cancelInbound)
     {
-        if (Interlocked.CompareExchange(ref _terminal, 1, 0) != 0) return;
+        ArgumentNullException.ThrowIfNull(error);
 
-        _terminalError = error;
+        if (Interlocked.CompareExchange(ref _terminalError, error, null) is not null) return;
+
+        Volatile.Write(ref _terminal, 1);
         _adapter.Dispose();
 
         if (completeOutbound)
