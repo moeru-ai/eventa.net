@@ -35,7 +35,7 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
         var waitToWrite = outbound.WaitToWriteAsync(waitToWriteCancellation.Token);
         if (!waitToWrite.IsCompleted)
         {
-            waitToWriteCancellation.Cancel();
+            CancelAndObservePendingWait(waitToWrite, waitToWriteCancellation);
             throw new InvalidOperationException("Outbound channel could not accept the message immediately.");
         }
 
@@ -57,6 +57,26 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
 
     /// <inheritdoc />
     public void OnReceived(string eventId, object? envelope, object? options = null) { }
+
+    private static void CancelAndObservePendingWait(
+        ValueTask<bool> waitToWrite,
+        CancellationTokenSource waitToWriteCancellation)
+    {
+        // Consume the pending wait even after canceling it so pooled
+        // IValueTaskSource-backed channel waiters are not abandoned.
+        var waitToWriteTask = waitToWrite.AsTask();
+        waitToWriteCancellation.Cancel();
+
+        _ = waitToWriteTask.ContinueWith(
+            static task =>
+            {
+                if (!task.IsFaulted) return;
+                _ = task.Exception;
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
 
     /// <inheritdoc />
     public void Dispose()

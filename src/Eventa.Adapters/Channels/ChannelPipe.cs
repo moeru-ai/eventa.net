@@ -28,7 +28,7 @@ public sealed class ChannelPipe : IDisposable
         var rightToLeft = Channel.CreateUnbounded<ChannelMessage>(ChannelOptions);
         var endpointOptions = new ChannelEndpointOptions
         {
-            CompleteOutboundOnDispose = true,
+            CompleteOutboundOnTerminal = true,
             ClosedEvent = options.ClosedEvent,
         };
 

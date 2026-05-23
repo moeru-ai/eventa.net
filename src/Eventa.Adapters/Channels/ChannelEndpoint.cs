@@ -116,7 +116,7 @@ public sealed class ChannelEndpoint : IEventContext
     {
         Terminate(
             new ChannelClosedException("Channel endpoint disposed."),
-            completeOutbound: _options.CompleteOutboundOnDispose,
+            completeOutbound: _options.CompleteOutboundOnTerminal,
             cancelInbound: true);
     }
 
@@ -126,7 +126,7 @@ public sealed class ChannelEndpoint : IEventContext
     /// <returns>A task that completes when the inbound channel closes or the endpoint terminates.</returns>
     private async Task RunInboundPumpAsync()
     {
-        var completeOutbound = _options.CompleteOutboundOnDispose;
+        var completeOutbound = _options.CompleteOutboundOnTerminal;
 
         try
         {

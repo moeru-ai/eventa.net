@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
+using System.Threading.Tasks.Sources;
 
 using Eventa.Adapters.Channels;
 
@@ -326,7 +327,7 @@ public class ChannelPipeTests
         using var endpoint = new ChannelEndpoint(
             inbound.Reader,
             outbound.Writer,
-            new ChannelEndpointOptions { CompleteOutboundOnDispose = true });
+            new ChannelEndpointOptions { CompleteOutboundOnTerminal = true });
         var definition = new EventDefinition<TestPayload>("channel:bounded-full");
 
         endpoint.Emit(definition, new TestPayload("first"));
@@ -356,7 +357,7 @@ public class ChannelPipeTests
     }
 
     [Fact]
-    public void Emit_WhenWaitToWriteWouldBlock_CancelsPendingProbeBeforeThrowing()
+    public async Task Emit_WhenWaitToWriteWouldBlock_CancelsAndObservesPendingProbeBeforeThrowing()
     {
         var inbound = Channel.CreateUnbounded<ChannelMessage>();
         var outbound = new ProbePendingWaitWriter();
@@ -368,7 +369,8 @@ public class ChannelPipeTests
         Assert.Equal("Outbound channel could not accept the message immediately.", error.Message);
         Assert.Equal(1, Volatile.Read(ref outbound.WaitToWriteCalls));
         Assert.Equal(1, Volatile.Read(ref outbound.CanceledWaits));
-        Assert.True(outbound.WaitTask.IsCanceled);
+        await outbound.ObservedTask.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Equal(1, Volatile.Read(ref outbound.GetResultCalls));
         Assert.Equal(0, Volatile.Read(ref outbound.WriteAsyncCalls));
     }
 
@@ -380,7 +382,7 @@ public class ChannelPipeTests
         using var left = new ChannelEndpoint(
             rightToLeft.Reader,
             leftToRight.Writer,
-            new ChannelEndpointOptions { CompleteOutboundOnDispose = true });
+            new ChannelEndpointOptions { CompleteOutboundOnTerminal = true });
         using var right = new ChannelEndpoint(leftToRight.Reader, rightToLeft.Writer);
         var payload = await WaitForClosedAsync(right, left.Dispose);
         var error = Assert.IsType<ChannelClosedException>(payload.Error);
@@ -416,7 +418,7 @@ public class ChannelPipeTests
         using var left = new ChannelEndpoint(
             rightToLeft.Reader,
             leftToRight.Writer,
-            new ChannelEndpointOptions { CompleteOutboundOnDispose = false });
+            new ChannelEndpointOptions { CompleteOutboundOnTerminal = false });
         using var right = new ChannelEndpoint(leftToRight.Reader, rightToLeft.Writer);
         var definition = new EventDefinition<TestPayload>("channel:paired-still-open");
 
@@ -434,7 +436,7 @@ public class ChannelPipeTests
         using var endpoint = new ChannelEndpoint(
             inbound.Reader,
             outbound.Writer,
-            new ChannelEndpointOptions { CompleteOutboundOnDispose = false });
+            new ChannelEndpointOptions { CompleteOutboundOnTerminal = false });
         var payload = await WaitForClosedAsync(endpoint, () => inbound.Writer.TryComplete());
         var error = Assert.IsType<ChannelClosedException>(payload.Error);
 
@@ -451,7 +453,7 @@ public class ChannelPipeTests
         using var endpoint = new ChannelEndpoint(
             inbound.Reader,
             outbound.Writer,
-            new ChannelEndpointOptions { CompleteOutboundOnDispose = false });
+            new ChannelEndpointOptions { CompleteOutboundOnTerminal = false });
         var expected = new InvalidOperationException("inbound failed");
         var payload = await WaitForClosedAsync(endpoint, () => inbound.Writer.TryComplete(expected));
 
@@ -770,15 +772,22 @@ public class ChannelPipeTests
         }
     }
 
-    private sealed class ProbePendingWaitWriter : ChannelWriter<ChannelMessage>
+    private sealed class ProbePendingWaitWriter : ChannelWriter<ChannelMessage>, IValueTaskSource<bool>
     {
-        private readonly TaskCompletionSource<bool> _wait = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private ManualResetValueTaskSourceCore<bool> _wait = new()
+        {
+            RunContinuationsAsynchronously = true
+        };
+
+        private CancellationTokenRegistration _cancellationRegistration;
+        private readonly TaskCompletionSource<bool> _observed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int WaitToWriteCalls;
         public int CanceledWaits;
+        public int GetResultCalls;
         public int WriteAsyncCalls;
 
-        public Task<bool> WaitTask => _wait.Task;
+        public Task ObservedTask => _observed.Task;
 
         public override bool TryComplete(Exception? error = null)
         {
@@ -794,19 +803,47 @@ public class ChannelPipeTests
         {
             Interlocked.Increment(ref WaitToWriteCalls);
 
-            cancellationToken.Register(() =>
+            _cancellationRegistration = cancellationToken.Register(() =>
             {
                 Interlocked.Increment(ref CanceledWaits);
-                _wait.TrySetCanceled(cancellationToken);
+                _wait.SetException(new OperationCanceledException(cancellationToken));
             });
 
-            return new ValueTask<bool>(_wait.Task);
+            return new ValueTask<bool>(this, _wait.Version);
         }
 
         public override ValueTask WriteAsync(ChannelMessage item, CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref WriteAsyncCalls);
             return ValueTask.FromException(new InvalidOperationException("WriteAsync should not be called."));
+        }
+
+        bool IValueTaskSource<bool>.GetResult(short token)
+        {
+            try
+            {
+                return _wait.GetResult(token);
+            }
+            finally
+            {
+                _cancellationRegistration.Dispose();
+                Interlocked.Increment(ref GetResultCalls);
+                _observed.TrySetResult(true);
+            }
+        }
+
+        ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token)
+        {
+            return _wait.GetStatus(token);
+        }
+
+        void IValueTaskSource<bool>.OnCompleted(
+            Action<object?> continuation,
+            object? state,
+            short token,
+            ValueTaskSourceOnCompletedFlags flags)
+        {
+            _wait.OnCompleted(continuation, state, token, flags);
         }
     }
 
