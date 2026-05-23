@@ -126,6 +126,8 @@ public sealed class ChannelEndpoint : IEventContext
     /// <returns>A task that completes when the inbound channel closes or the endpoint terminates.</returns>
     private async Task RunInboundPumpAsync()
     {
+        var completeOutbound = _options.CompleteOutboundOnDispose;
+
         try
         {
             await foreach (var message in _inbound.ReadAllAsync(_disposeCancellation.Token).ConfigureAwait(false))
@@ -138,15 +140,12 @@ public sealed class ChannelEndpoint : IEventContext
                 _context.Receive(message.Envelope, message.Options);
             }
 
-            Terminate(
-                new ChannelClosedException("Channel closed."),
-                completeOutbound: true,
-                cancelInbound: false);
+            Terminate(new ChannelClosedException("Channel closed."), completeOutbound, cancelInbound: false);
         }
         catch (OperationCanceledException) when (Volatile.Read(ref _terminalError) is not null) { }
         catch (Exception error)
         {
-            Terminate(error, completeOutbound: true, cancelInbound: false, outboundError: error);
+            Terminate(error, completeOutbound, cancelInbound: false, outboundError: error);
         }
         finally
         {
@@ -180,7 +179,13 @@ public sealed class ChannelEndpoint : IEventContext
 
         if (cancelInbound)
         {
-            _disposeCancellation.Cancel();
+            try
+            {
+                // The inbound pump disposes this CTS in its finally block, so a later local Dispose
+                // can race with that cleanup after terminal ownership has already been decided.
+                _disposeCancellation.Cancel();
+            }
+            catch (ObjectDisposedException) { }
         }
 
         _context.NotifyTransportFatal(error);

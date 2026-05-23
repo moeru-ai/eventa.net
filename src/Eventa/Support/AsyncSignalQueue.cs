@@ -15,7 +15,7 @@ internal sealed class AsyncSignalQueue<T>
     {
         SingleReader = false,
         SingleWriter = false,
-        AllowSynchronousContinuations = false,
+        AllowSynchronousContinuations = true,
     };
 
     private readonly Channel<T> _channel = Channel.CreateUnbounded<T>(ChannelOptions);

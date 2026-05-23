@@ -206,7 +206,11 @@ usable as an `IEventContext`. The v1 channel adapter is in-process and
 object-only; it forwards existing typed envelopes through
 `System.Threading.Channels` and does not serialize payloads. Default
 `ChannelPipe` channels are unbounded and intended for local composition, tests,
-and same-process boundaries, not as a throughput or backpressure policy.
+and same-process boundaries, not as a throughput or backpressure policy. Both
+`Eventa` and `Eventa.Adapters` enable `IsAotCompatible=true`; the current
+Release builds run cleanly under the trim and Native AOT analyzers, and the
+channel adapter keeps its transport path free of reflection, dynamic dispatch,
+and runtime generic construction.
 
 ## Project Layout
 

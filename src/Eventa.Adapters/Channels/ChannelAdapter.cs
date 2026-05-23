@@ -25,10 +25,28 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
                 $"Event '{eventId}' was sent with an envelope that does not implement {nameof(IEventEnvelope)}.");
         }
 
-        if (!outbound.TryWrite(new ChannelMessage(eventEnvelope, options)))
+        var message = new ChannelMessage(eventEnvelope, options);
+        if (outbound.TryWrite(message)) return;
+
+        // Keep Emit synchronous: probe terminal state vs. transient pressure without waiting.
+        var waitToWrite = outbound.WaitToWriteAsync();
+        if (!waitToWrite.IsCompleted)
         {
-            throw new ChannelClosedException("Channel endpoint closed.");
+            throw new InvalidOperationException("Outbound channel could not accept the message immediately.");
         }
+
+        // WaitToWriteAsync(true) only reports a writable window; another writer can still win
+        // that race before we claim the slot, so we need one more non-blocking write attempt.
+        if (waitToWrite.IsCompletedSuccessfully && waitToWrite.Result && outbound.TryWrite(message)) return;
+
+        if (waitToWrite.IsCompletedSuccessfully && waitToWrite.Result)
+        {
+            throw new InvalidOperationException("Outbound channel could not accept the message immediately.");
+        }
+
+        // A synchronously completed false/faulted wait means the writer is terminal. Use WriteAsync
+        // here so completed/faulted channels surface their original exception shape unchanged.
+        outbound.WriteAsync(message).AsTask().GetAwaiter().GetResult();
     }
 
     /// <inheritdoc />
