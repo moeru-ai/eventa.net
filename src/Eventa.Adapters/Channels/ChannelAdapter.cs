@@ -35,19 +35,15 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
             throw new InvalidOperationException("Outbound channel could not accept the message immediately.");
         }
 
-        if (waitToWrite.IsCompletedSuccessfully)
+        // Short-circuit evaluation keeps ValueTask.Result consumed at most once, and only after
+        // the wait has completed successfully.
+        if (waitToWrite.IsCompletedSuccessfully && waitToWrite.Result)
         {
-            // ValueTask can be backed by IValueTaskSource, so consume the completed result once.
-            var canWrite = waitToWrite.Result;
-
             // WaitToWriteAsync(true) only reports a writable window; another writer can still win
             // that race before we claim the slot, so we need one more non-blocking write attempt.
-            if (canWrite && outbound.TryWrite(message)) return;
+            if (outbound.TryWrite(message)) return;
 
-            if (canWrite)
-            {
-                throw new InvalidOperationException("Outbound channel could not accept the message immediately.");
-            }
+            throw new InvalidOperationException("Outbound channel could not accept the message immediately.");
         }
 
         // A synchronously completed false/faulted wait means the writer is terminal. Use WriteAsync
