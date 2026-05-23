@@ -514,7 +514,7 @@ internal static class Program
 
     private sealed record AdapterSentCall(string EventId, object? Envelope, object? Options);
 
-    private sealed record AdapterReceivedCall(string EventId, object? Envelope);
+    private sealed record AdapterReceivedCall(string EventId, object? Envelope, object? Options);
 
     private sealed class RecordingAdapter : IEventaAdapter
     {
@@ -527,9 +527,9 @@ internal static class Program
             SentCalls.Add(new AdapterSentCall(eventId, envelope, options));
         }
 
-        public void OnReceived(string eventId, object? envelope)
+        public void OnReceived(string eventId, object? envelope, object? options = null)
         {
-            ReceivedCalls.Add(new AdapterReceivedCall(eventId, envelope));
+            ReceivedCalls.Add(new AdapterReceivedCall(eventId, envelope, options));
         }
 
         public void Dispose() { }
