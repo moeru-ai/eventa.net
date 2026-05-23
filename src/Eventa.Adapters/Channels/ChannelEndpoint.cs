@@ -140,7 +140,7 @@ public sealed class ChannelEndpoint : IEventContext
 
             Terminate(
                 new ChannelClosedException("Channel closed."),
-                completeOutbound: false,
+                completeOutbound: true,
                 cancelInbound: false);
         }
         catch (OperationCanceledException) when (Volatile.Read(ref _terminalError) is not null) { }
