@@ -58,6 +58,18 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
     /// <inheritdoc />
     public void OnReceived(string eventId, object? envelope, object? options = null) { }
 
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        Interlocked.Exchange(ref _disposed, 1);
+    }
+
+    /// <summary>
+    /// Cancels a pending <see cref="ChannelWriter{T}.WaitToWriteAsync(CancellationToken)"/> probe
+    /// only after bridging it to a <see cref="Task"/> so pooled channel waiters are still observed.
+    /// </summary>
+    /// <param name="waitToWrite">The pending writer-availability probe to observe.</param>
+    /// <param name="waitToWriteCancellation">The cancellation source that aborts the probe.</param>
     private static void CancelAndObservePendingWait(
         ValueTask<bool> waitToWrite,
         CancellationTokenSource waitToWriteCancellation)
@@ -76,11 +88,5 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
-    }
-
-    /// <inheritdoc />
-    public void Dispose()
-    {
-        Interlocked.Exchange(ref _disposed, 1);
     }
 }
