@@ -146,7 +146,7 @@ public sealed class ChannelEndpoint : IEventContext
         catch (OperationCanceledException) when (Volatile.Read(ref _terminalError) is not null) { }
         catch (Exception error)
         {
-            Terminate(error, completeOutbound: false, cancelInbound: false);
+            Terminate(error, completeOutbound: true, cancelInbound: false, outboundError: error);
         }
     }
 
@@ -156,10 +156,12 @@ public sealed class ChannelEndpoint : IEventContext
     /// <param name="error">The terminal error exposed to pending invocations and future operations.</param>
     /// <param name="completeOutbound">Whether to complete the outbound channel writer.</param>
     /// <param name="cancelInbound">Whether to cancel the inbound pump.</param>
+    /// <param name="outboundError">The optional error used to fault the outbound channel writer.</param>
     private void Terminate(
         Exception error,
         bool completeOutbound,
-        bool cancelInbound)
+        bool cancelInbound,
+        Exception? outboundError = null)
     {
         ArgumentNullException.ThrowIfNull(error);
 
@@ -169,7 +171,7 @@ public sealed class ChannelEndpoint : IEventContext
 
         if (completeOutbound)
         {
-            _outbound.TryComplete();
+            _outbound.TryComplete(outboundError);
         }
 
         if (cancelInbound)

@@ -245,6 +245,43 @@ public class ChannelPipeTests
     }
 
     [Fact]
+    public async Task InboundListenerException_CompletesOutboundForPairedEndpointWithOriginalCause()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new EventDefinition<TestPayload>("channel:paired-listener-fault");
+        var expected = new InvalidOperationException("listener failed");
+        var closed = new TaskCompletionSource<ChannelClosedPayload>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = pipe.Right.Subscribe(definition, _ => throw expected);
+        using var __ = pipe.Left.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
+
+        pipe.Left.Emit(definition, new TestPayload("boom"));
+
+        var payload = await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Same(expected, payload.Error);
+    }
+
+    [Fact]
+    public async Task InboundListenerException_FaultsPendingInvokeOnPairedEndpointWithOriginalCause()
+    {
+        using var pipe = new ChannelPipe();
+        var pendingDefinition = new InvokeEventDefinition<string, string>("channel:pending-peer-fault");
+        var faultingDefinition = new EventDefinition<TestPayload>("channel:pending-peer-listener-fault");
+        var expected = new InvalidOperationException("listener failed");
+        var client = pipe.Left.CreateInvokeClient(pendingDefinition);
+        var pending = client.InvokeAsync("request", CancellationToken.None);
+
+        using var _ = pipe.Right.Subscribe(faultingDefinition, _ => throw expected);
+
+        pipe.Left.Emit(faultingDefinition, new TestPayload("boom"));
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await pending.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        Assert.Same(expected, actual);
+    }
+
+    [Fact]
     public async Task Emit_AfterInboundListenerException_PreservesOriginalTerminalCause()
     {
         var inbound = Channel.CreateUnbounded<ChannelMessage>();

@@ -16,7 +16,7 @@ dotnet test --project tests/Eventa.Adapters.Tests/Eventa.Adapters.Tests.csproj -
 dotnet run --project examples/Eventa.Example/Eventa.Example.csproj --configuration Release --no-restore
 ```
 
-Restore first, build the full solution, then run both xUnit test projects. Run the example after API or behavior changes that affect user-facing flows.
+Restore first, build the full solution, then run the two xUnit test projects as separate `dotnet test --project ...` commands. This repository uses Microsoft.Testing.Platform, so agents should not rely on repo-wide `dotnet test` discovery when narrowing scope. Run the example after API or behavior changes that affect user-facing flows.
 
 ## Coding Style & Naming Conventions
 
@@ -24,7 +24,13 @@ Follow `.editorconfig`: spaces only, 4-space indentation for C#, 2-space indenta
 
 ## Testing Guidelines
 
-Tests use xUnit v3 with Microsoft.Testing.Platform, configured by `global.json`. Keep tests close to the behavior they cover and name methods in the existing `MethodOrScenario_Condition_ExpectedResult` style, for example `InvokeAsync_WithPreCanceledToken_EmitsAbortOnlyOnce`. Add regression coverage for cancellation, streaming, adapter faulting, and concurrency changes.
+Tests use xUnit v3 with Microsoft.Testing.Platform, configured by `global.json`. Always pass `--project` when invoking tests from the CLI in this repo. For targeted validation, use Microsoft.Testing.Platform/xUnit v3 switches such as `--filter-class Eventa.Tests.AsyncSignalQueueTests`, and prefer fully qualified class names even when the simple class name appears unique.
+
+```text
+dotnet test --project tests/Eventa.Tests/Eventa.Tests.csproj --configuration Release --no-build --filter-class Eventa.Tests.AsyncSignalQueueTests
+```
+
+Do not use VSTest-style `--filter "..."` expressions here; they are the wrong syntax for this setup and will commonly return zero tests. Filtering by class is the most reliable narrow validation path in this repo. Keep tests close to the behavior they cover and name methods in the existing `MethodOrScenario_Condition_ExpectedResult` style, for example `InvokeAsync_WithPreCanceledToken_EmitsAbortOnlyOnce`. Add regression coverage for cancellation, streaming, adapter faulting, and concurrency changes.
 
 ## Commit & Pull Request Guidelines
 
@@ -32,4 +38,4 @@ History uses Conventional Commit prefixes such as `feat:`, `fix:`, `docs:`, `cho
 
 ## Agent-Specific Notes
 
-Keep plans concise and list unresolved questions at the end. When sharing runnable PowerShell commands, prefer fenced `text` blocks rather than inline command formatting.
+Keep plans concise and list unresolved questions at the end. When sharing runnable PowerShell commands, prefer fenced `text` blocks rather than inline command formatting. For targeted validation, prefer explicit `dotnet test --project ...` commands and `--filter-class <FullyQualifiedClassName>` over generic single-test tooling or VSTest filter expressions.
