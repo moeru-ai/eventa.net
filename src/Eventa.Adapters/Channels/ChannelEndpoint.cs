@@ -16,7 +16,6 @@ public sealed class ChannelEndpoint : IEventContext
     private readonly ChannelAdapter _adapter;
     private readonly EventContext _context;
     private Exception? _terminalError;
-    private int _terminal;
 
     /// <summary>
     /// Creates a channel endpoint over supplied inbound and outbound channel primitives.
@@ -144,7 +143,7 @@ public sealed class ChannelEndpoint : IEventContext
                 completeOutbound: false,
                 cancelInbound: false);
         }
-        catch (OperationCanceledException) when (Volatile.Read(ref _terminal) != 0) { }
+        catch (OperationCanceledException) when (Volatile.Read(ref _terminalError) is not null) { }
         catch (Exception error)
         {
             Terminate(error, completeOutbound: false, cancelInbound: false);
@@ -166,7 +165,6 @@ public sealed class ChannelEndpoint : IEventContext
 
         if (Interlocked.CompareExchange(ref _terminalError, error, null) is not null) return;
 
-        Volatile.Write(ref _terminal, 1);
         _adapter.Dispose();
 
         if (completeOutbound)
@@ -206,17 +204,12 @@ public sealed class ChannelEndpoint : IEventContext
     /// <exception cref="ChannelClosedException">Thrown when the endpoint is closed.</exception>
     private void ThrowIfTerminal()
     {
-        if (Volatile.Read(ref _terminal) == 0) return;
+        var error = Volatile.Read(ref _terminalError);
+        if (error is null) return;
 
-        var error = _terminalError;
         if (error is ChannelClosedException closed)
         {
             throw closed;
-        }
-
-        if (error is null)
-        {
-            throw new ChannelClosedException("Channel endpoint closed.");
         }
 
         throw new ChannelClosedException("Channel endpoint closed.", error);

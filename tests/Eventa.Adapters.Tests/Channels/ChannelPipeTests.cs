@@ -269,6 +269,32 @@ public class ChannelPipeTests
     }
 
     [Fact]
+    public async Task Dispose_AfterInboundListenerException_PreservesOriginalTerminalCause()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
+        var faultingDefinition = new EventDefinition<TestPayload>("channel:listener-dispose-terminal-cause");
+        var lateDefinition = new EventDefinition<TestPayload>("channel:late-after-dispose");
+        var expected = new InvalidOperationException("listener failed");
+        var closed = new TaskCompletionSource<ChannelClosedPayload>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = endpoint.Subscribe(faultingDefinition, _ => throw expected);
+        using var __ = endpoint.Subscribe(ChannelEvents.Closed, envelope => closed.TrySetResult(envelope.Body));
+
+        await inbound.Writer.WriteAsync(
+            new ChannelMessage(new EventEnvelope<TestPayload>(faultingDefinition.Id, new TestPayload("boom"))),
+            TestContext.Current.CancellationToken);
+        await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        endpoint.Dispose();
+
+        var error = Assert.Throws<ChannelClosedException>(() => endpoint.Emit(lateDefinition, new TestPayload("late")));
+        Assert.Same(expected, error.InnerException);
+    }
+
+    [Fact]
     public async Task FaultedInboundChannel_PreservesOriginalExceptionInClosedEvent()
     {
         var inbound = Channel.CreateUnbounded<ChannelMessage>();
