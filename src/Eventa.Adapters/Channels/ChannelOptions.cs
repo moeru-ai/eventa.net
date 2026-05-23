@@ -19,7 +19,8 @@ public sealed class ChannelPipeOptions
 public sealed class ChannelEndpointOptions
 {
     /// <summary>
-    /// Gets whether endpoint disposal completes the supplied outbound writer.
+    /// Gets whether endpoint terminal transitions complete the supplied outbound writer,
+    /// including local disposal and observed inbound close or fault.
     /// </summary>
     public bool CompleteOutboundOnDispose { get; init; }
 
