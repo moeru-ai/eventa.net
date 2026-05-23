@@ -29,9 +29,13 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
         if (outbound.TryWrite(message)) return;
 
         // Keep Emit synchronous: probe terminal state vs. transient pressure without waiting.
-        var waitToWrite = outbound.WaitToWriteAsync();
+        // If the probe would block, cancel it so bounded channels don't retain an abandoned
+        // WaitToWriteAsync waiter after we've already decided to fail fast.
+        using var waitToWriteCancellation = new CancellationTokenSource();
+        var waitToWrite = outbound.WaitToWriteAsync(waitToWriteCancellation.Token);
         if (!waitToWrite.IsCompleted)
         {
+            waitToWriteCancellation.Cancel();
             throw new InvalidOperationException("Outbound channel could not accept the message immediately.");
         }
 

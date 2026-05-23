@@ -356,6 +356,23 @@ public class ChannelPipeTests
     }
 
     [Fact]
+    public void Emit_WhenWaitToWriteWouldBlock_CancelsPendingProbeBeforeThrowing()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = new ProbePendingWaitWriter();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound);
+        var definition = new EventDefinition<TestPayload>("channel:writer-wait-probe");
+
+        var error = Assert.Throws<InvalidOperationException>(() => endpoint.Emit(definition, new TestPayload("late")));
+
+        Assert.Equal("Outbound channel could not accept the message immediately.", error.Message);
+        Assert.Equal(1, Volatile.Read(ref outbound.WaitToWriteCalls));
+        Assert.Equal(1, Volatile.Read(ref outbound.CanceledWaits));
+        Assert.True(outbound.WaitTask.IsCanceled);
+        Assert.Equal(0, Volatile.Read(ref outbound.WriteAsyncCalls));
+    }
+
+    [Fact]
     public async Task CustomEndpointDispose_WhenConfigured_CompletesOutboundForPairedEndpoint()
     {
         var leftToRight = Channel.CreateUnbounded<ChannelMessage>();
@@ -744,6 +761,46 @@ public class ChannelPipeTests
         public override ValueTask<bool> WaitToWriteAsync(CancellationToken cancellationToken = default)
         {
             return ValueTask.FromResult(true);
+        }
+
+        public override ValueTask WriteAsync(ChannelMessage item, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref WriteAsyncCalls);
+            return ValueTask.FromException(new InvalidOperationException("WriteAsync should not be called."));
+        }
+    }
+
+    private sealed class ProbePendingWaitWriter : ChannelWriter<ChannelMessage>
+    {
+        private readonly TaskCompletionSource<bool> _wait = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int WaitToWriteCalls;
+        public int CanceledWaits;
+        public int WriteAsyncCalls;
+
+        public Task<bool> WaitTask => _wait.Task;
+
+        public override bool TryComplete(Exception? error = null)
+        {
+            return true;
+        }
+
+        public override bool TryWrite(ChannelMessage item)
+        {
+            return false;
+        }
+
+        public override ValueTask<bool> WaitToWriteAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref WaitToWriteCalls);
+
+            cancellationToken.Register(() =>
+            {
+                Interlocked.Increment(ref CanceledWaits);
+                _wait.TrySetCanceled(cancellationToken);
+            });
+
+            return new ValueTask<bool>(_wait.Task);
         }
 
         public override ValueTask WriteAsync(ChannelMessage item, CancellationToken cancellationToken = default)
