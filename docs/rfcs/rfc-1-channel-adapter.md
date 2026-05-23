@@ -6,7 +6,7 @@ RFC PR: https://github.com/moeru-ai/eventa.net/pull/18
 
 Start date: 2026-05-09
 
-Last reviewed: 2026-05-16
+Last reviewed: 2026-05-23
 
 ## Summary
 
@@ -114,7 +114,7 @@ using var endpoint = new ChannelEndpoint(
     outbound.Writer,
     new ChannelEndpointOptions
     {
-        CompleteOutboundOnDispose = true,
+        CompleteOutboundOnTerminal = true,
     });
 
 IEventContext context = endpoint;
@@ -158,7 +158,7 @@ public sealed class ChannelPipeOptions
 
 public sealed class ChannelEndpointOptions
 {
-    public bool CompleteOutboundOnDispose { get; init; }
+    public bool CompleteOutboundOnTerminal { get; init; }
 
     public EventDefinition<ChannelClosedPayload> ClosedEvent { get; init; }
         = ChannelEvents.Closed;
@@ -187,9 +187,10 @@ ownership is not configurable through `ChannelPipeOptions`. `ChannelPipeOptions`
 applies `ClosedEvent` symmetrically to both pipe-created endpoints, `Left` and
 `Right`.
 
-Custom `ChannelEndpoint` instances respect `CompleteOutboundOnDispose`; when it
-is `true`, disposal completes the externally supplied outbound writer, and when
-it is `false`, writer completion is left to the external owner.
+Custom `ChannelEndpoint` instances respect `CompleteOutboundOnTerminal`; when it
+is `true`, endpoint terminal transitions complete the externally supplied
+outbound writer, and when it is `false`, writer completion is left to the
+external owner.
 
 Recommended new core transport-facing abstractions:
 
@@ -480,7 +481,7 @@ transport fatal delivery path.
 
 - treats local endpoint disposal as a local transport terminal condition
 - stops accepting new outbound sends
-- completes the outbound writer when `CompleteOutboundOnDispose` is `true`
+- completes the outbound writer when `CompleteOutboundOnTerminal` is `true`
 - cancels the inbound pump for local disposal
 - runs deterministic transport fatal notification before disposing the context
 - best-effort dispatches the configured closed event before disposing the context
@@ -535,7 +536,7 @@ Otherwise local endpoint disposal faults the session with
 
 When outbound completion is owned, or when the external owner completes or faults
 the writer, the paired endpoint observes disposal through channel completion and
-uses the remote close or fault sequence above. If `CompleteOutboundOnDispose` is
+uses the remote close or fault sequence above. If `CompleteOutboundOnTerminal` is
 `false` and no external completion or fault occurs, the paired endpoint is not
 guaranteed to observe local endpoint disposal.
 
@@ -635,7 +636,7 @@ diagnostics.
   `InnerException`.
 - Lifecycle: disposing one pipe-created endpoint completes its owned outbound
   writer, so the paired endpoint observes channel completion; custom endpoint
-  disposal respects `CompleteOutboundOnDispose=true` and `false`; concurrent
+  disposal respects `CompleteOutboundOnTerminal=true` and `false`; concurrent
   disposal and disposal through `IEventContext` are idempotent, do not
   double-notify, and stop inbound loops.
 - Post-terminal operations: user-initiated `Emit`, listener registration,

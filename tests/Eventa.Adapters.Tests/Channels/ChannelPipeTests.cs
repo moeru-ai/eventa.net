@@ -1,10 +1,12 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
+using System.Threading.Tasks.Sources;
 
 using Eventa.Adapters.Channels;
 
 using ChannelClosedException = Eventa.Adapters.Channels.ChannelClosedException;
+using SystemChannelClosedException = System.Threading.Channels.ChannelClosedException;
 
 namespace Eventa.Adapters.Tests.Channels;
 
@@ -136,6 +138,41 @@ public class ChannelPipeTests
     }
 
     [Fact]
+    public async Task Dispose_FaultsActiveStreamBeforeClosedEvent()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new InvokeEventDefinition<int, int>("channel:dispose-stream");
+        var closedObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        using var _ = pipe.Right.RegisterStreamHandler(definition, PendingAsync);
+
+        var client = pipe.Left.CreateInvokeStreamClient(definition);
+        await using var enumerator = client.InvokeAsync(1, CancellationToken.None)
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        var pendingMoveNext = enumerator.MoveNextAsync().AsTask();
+
+        using var __ = pipe.Left.Subscribe(ChannelEvents.Closed, _ =>
+        {
+            if (pendingMoveNext.IsFaulted)
+            {
+                closedObserved.TrySetResult(true);
+            }
+            else
+            {
+                closedObserved.TrySetException(new InvalidOperationException("Closed event ran before stream faulted."));
+            }
+        });
+
+        pipe.Left.Dispose();
+
+        var error = await Assert.ThrowsAsync<ChannelClosedException>(
+            async () => await pendingMoveNext.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        await closedObserved.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Equal("Channel endpoint disposed.", error.Message);
+    }
+
+    [Fact]
     public void Emit_AfterEndpointDisposed_FailsFast()
     {
         using var pipe = new ChannelPipe();
@@ -145,6 +182,67 @@ public class ChannelPipeTests
 
         var error = Assert.Throws<ChannelClosedException>(() => pipe.Left.Emit(definition, new TestPayload("late")));
         Assert.Equal("Channel endpoint disposed.", error.Message);
+    }
+
+    [Fact]
+    public void ListenerOperations_AfterEndpointDisposed_FailFast()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new EventDefinition<TestPayload>("channel:post-terminal-listeners");
+        var matchExpression = new MatchExpression<TestPayload>("channel:post-terminal-match", _ => true);
+        Action<EventEnvelope<TestPayload>> handler = _ => { };
+
+        pipe.Left.Dispose();
+
+        AssertDisposed(() => pipe.Left.Subscribe(definition, handler));
+        AssertDisposed(() => pipe.Left.SubscribeOnce(definition, handler));
+        AssertDisposed(() => pipe.Left.Unsubscribe(definition, handler));
+        AssertDisposed(() => pipe.Left.Subscribe(matchExpression, handler));
+        AssertDisposed(() => pipe.Left.SubscribeOnce(matchExpression, handler));
+        AssertDisposed(() => pipe.Left.Unsubscribe(matchExpression, handler));
+    }
+
+    [Fact]
+    public void HandlerRegistration_AfterEndpointDisposed_FailsFast()
+    {
+        using var pipe = new ChannelPipe();
+        var invokeDefinition = new InvokeEventDefinition<string, string>("channel:post-terminal-invoke-handler");
+        var streamDefinition = new InvokeEventDefinition<int, int>("channel:post-terminal-stream-handler");
+
+        pipe.Left.Dispose();
+
+        AssertDisposed(() => pipe.Left.RegisterInvokeHandler(
+            invokeDefinition,
+            static (request, _) => Task.FromResult(request)));
+        AssertDisposed(() => pipe.Left.RegisterStreamHandler(streamDefinition, CountAsync));
+    }
+
+    [Fact]
+    public void CreateInvokeClient_AfterEndpointDisposed_FirstInvokeFailsFast()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new InvokeEventDefinition<string, string>("channel:post-terminal-client");
+
+        pipe.Left.Dispose();
+
+        var client = pipe.Left.CreateInvokeClient(definition);
+        Assert.NotNull(client);
+
+        AssertDisposed(() => client.InvokeAsync("late", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void CreateInvokeStreamClient_AfterEndpointDisposed_FirstInvokeFailsFast()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new InvokeEventDefinition<int, int>("channel:post-terminal-stream-client");
+
+        pipe.Left.Dispose();
+
+        var client = pipe.Left.CreateInvokeStreamClient(definition);
+        Assert.NotNull(client);
+
+        AssertDisposed(() => client.InvokeAsync(1, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -173,7 +271,7 @@ public class ChannelPipeTests
     }
 
     [Fact]
-    public void Emit_WhenOutboundWriterCompleted_ThrowsChannelClosedException()
+    public void Emit_WhenOutboundWriterCompleted_PropagatesWriterFailureUnchanged()
     {
         var inbound = Channel.CreateUnbounded<ChannelMessage>();
         var outbound = Channel.CreateUnbounded<ChannelMessage>();
@@ -182,12 +280,44 @@ public class ChannelPipeTests
 
         outbound.Writer.TryComplete();
 
-        var error = Assert.Throws<ChannelClosedException>(() => endpoint.Emit(definition, new TestPayload("late")));
-        Assert.Equal("Channel endpoint closed.", error.Message);
+        var error = Assert.Throws<SystemChannelClosedException>(() => endpoint.Emit(definition, new TestPayload("late")));
+        Assert.Null(error.InnerException);
     }
 
     [Fact]
-    public async Task Emit_WhenBoundedOutboundFull_ThrowsChannelClosedExceptionWithoutBlocking()
+    public void Emit_WhenOutboundWriterFaulted_PropagatesOriginalWriterFailure()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
+        var definition = new EventDefinition<TestPayload>("channel:writer-faulted");
+        var expected = new InvalidOperationException("writer failed");
+
+        outbound.Writer.TryComplete(expected);
+
+        var error = Assert.Throws<SystemChannelClosedException>(() => endpoint.Emit(definition, new TestPayload("late")));
+        Assert.Same(expected, error.InnerException);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_WhenOutboundWriterFaulted_PropagatesOriginalWriterFailure()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
+        var definition = new InvokeEventDefinition<string, string>("channel:invoke-writer-faulted");
+        var expected = new InvalidOperationException("writer failed");
+        var client = endpoint.CreateInvokeClient(definition);
+
+        outbound.Writer.TryComplete(expected);
+
+        var error = await Assert.ThrowsAsync<SystemChannelClosedException>(
+            async () => await client.InvokeAsync("request", TestContext.Current.CancellationToken));
+        Assert.Same(expected, error.InnerException);
+    }
+
+    [Fact]
+    public async Task Emit_WhenBoundedOutboundFull_FailsFastWithoutBlocking()
     {
         var inbound = Channel.CreateUnbounded<ChannelMessage>();
         var outbound = Channel.CreateBounded<ChannelMessage>(new BoundedChannelOptions(1)
@@ -197,16 +327,51 @@ public class ChannelPipeTests
         using var endpoint = new ChannelEndpoint(
             inbound.Reader,
             outbound.Writer,
-            new ChannelEndpointOptions { CompleteOutboundOnDispose = true });
+            new ChannelEndpointOptions { CompleteOutboundOnTerminal = true });
         var definition = new EventDefinition<TestPayload>("channel:bounded-full");
 
         endpoint.Emit(definition, new TestPayload("first"));
         var secondEmit = Task.Run(
-            () => Assert.Throws<ChannelClosedException>(() => endpoint.Emit(definition, new TestPayload("second"))),
+            () => Assert.Throws<InvalidOperationException>(() => endpoint.Emit(definition, new TestPayload("second"))),
             TestContext.Current.CancellationToken);
 
         var error = await secondEmit.WaitAsync(TimeSpan.FromMilliseconds(250), TestContext.Current.CancellationToken);
-        Assert.Equal("Channel endpoint closed.", error.Message);
+        Assert.Equal("Outbound channel could not accept the message immediately.", error.Message);
+    }
+
+    [Fact]
+    public async Task Emit_WhenWriterSignalsWritableButRejectsTryWrite_FailsFastWithoutCallingWriteAsync()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = new ProbeRejectingWriter();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound);
+        var definition = new EventDefinition<TestPayload>("channel:writer-contention");
+
+        var emitTask = Task.Run(
+            () => Assert.Throws<InvalidOperationException>(() => endpoint.Emit(definition, new TestPayload("late"))),
+            TestContext.Current.CancellationToken);
+
+        var error = await emitTask.WaitAsync(TimeSpan.FromMilliseconds(250), TestContext.Current.CancellationToken);
+        Assert.Equal("Outbound channel could not accept the message immediately.", error.Message);
+        Assert.Equal(0, Volatile.Read(ref outbound.WriteAsyncCalls));
+    }
+
+    [Fact]
+    public async Task Emit_WhenWaitToWriteWouldBlock_CancelsAndObservesPendingProbeBeforeThrowing()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = new ProbePendingWaitWriter();
+        using var endpoint = new ChannelEndpoint(inbound.Reader, outbound);
+        var definition = new EventDefinition<TestPayload>("channel:writer-wait-probe");
+
+        var error = Assert.Throws<InvalidOperationException>(() => endpoint.Emit(definition, new TestPayload("late")));
+
+        Assert.Equal("Outbound channel could not accept the message immediately.", error.Message);
+        Assert.Equal(1, Volatile.Read(ref outbound.WaitToWriteCalls));
+        Assert.Equal(1, Volatile.Read(ref outbound.CanceledWaits));
+        await outbound.ObservedTask.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Equal(1, Volatile.Read(ref outbound.GetResultCalls));
+        Assert.Equal(0, Volatile.Read(ref outbound.WriteAsyncCalls));
     }
 
     [Fact]
@@ -217,11 +382,84 @@ public class ChannelPipeTests
         using var left = new ChannelEndpoint(
             rightToLeft.Reader,
             leftToRight.Writer,
-            new ChannelEndpointOptions { CompleteOutboundOnDispose = true });
+            new ChannelEndpointOptions { CompleteOutboundOnTerminal = true });
         using var right = new ChannelEndpoint(leftToRight.Reader, rightToLeft.Writer);
         var payload = await WaitForClosedAsync(right, left.Dispose);
         var error = Assert.IsType<ChannelClosedException>(payload.Error);
         Assert.Equal("Channel closed.", error.Message);
+    }
+
+    [Fact]
+    public async Task Dispose_WhenPipeAndEndpointDisposalsRace_EmitsClosedEventOncePerEndpoint()
+    {
+        using var pipe = new ChannelPipe();
+        IEventContext leftContext = pipe.Left;
+        IEventContext rightContext = pipe.Right;
+        var leftClosed = CreateSingleClosedObserver(pipe.Left, "left");
+        var rightClosed = CreateSingleClosedObserver(pipe.Right, "right");
+
+        await Task.WhenAll(
+            Task.Run(pipe.Dispose, TestContext.Current.CancellationToken),
+            Task.Run(leftContext.Dispose, TestContext.Current.CancellationToken),
+            Task.Run(rightContext.Dispose, TestContext.Current.CancellationToken));
+
+        await leftClosed.Observed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await rightClosed.Observed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, Volatile.Read(ref leftClosed.Count));
+        Assert.Equal(1, Volatile.Read(ref rightClosed.Count));
+    }
+
+    [Fact]
+    public void CustomEndpointDispose_WhenNotConfigured_LeavesPairedEndpointUsable()
+    {
+        var leftToRight = Channel.CreateUnbounded<ChannelMessage>();
+        var rightToLeft = Channel.CreateUnbounded<ChannelMessage>();
+        using var left = new ChannelEndpoint(
+            rightToLeft.Reader,
+            leftToRight.Writer,
+            new ChannelEndpointOptions { CompleteOutboundOnTerminal = false });
+        using var right = new ChannelEndpoint(leftToRight.Reader, rightToLeft.Writer);
+        var definition = new EventDefinition<TestPayload>("channel:paired-still-open");
+
+        left.Dispose();
+
+        var error = Record.Exception(() => right.Emit(definition, new TestPayload("still-open")));
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public async Task InboundCompletion_WhenOutboundNotOwned_LeavesOutboundWriterUsable()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(
+            inbound.Reader,
+            outbound.Writer,
+            new ChannelEndpointOptions { CompleteOutboundOnTerminal = false });
+        var payload = await WaitForClosedAsync(endpoint, () => inbound.Writer.TryComplete());
+        var error = Assert.IsType<ChannelClosedException>(payload.Error);
+
+        Assert.Equal("Channel closed.", error.Message);
+        Assert.True(outbound.Writer.TryWrite(
+            new ChannelMessage(new EventEnvelope<TestPayload>("channel:external-owner", new TestPayload("still-open")))));
+    }
+
+    [Fact]
+    public async Task InboundFault_WhenOutboundNotOwned_LeavesOutboundWriterUsable()
+    {
+        var inbound = Channel.CreateUnbounded<ChannelMessage>();
+        var outbound = Channel.CreateUnbounded<ChannelMessage>();
+        using var endpoint = new ChannelEndpoint(
+            inbound.Reader,
+            outbound.Writer,
+            new ChannelEndpointOptions { CompleteOutboundOnTerminal = false });
+        var expected = new InvalidOperationException("inbound failed");
+        var payload = await WaitForClosedAsync(endpoint, () => inbound.Writer.TryComplete(expected));
+
+        Assert.Same(expected, payload.Error);
+        Assert.True(outbound.Writer.TryWrite(
+            new ChannelMessage(new EventEnvelope<TestPayload>("channel:external-owner-fault", new TestPayload("still-open")))));
     }
 
     [Fact]
@@ -232,7 +470,10 @@ public class ChannelPipeTests
         using var endpoint = new ChannelEndpoint(inbound.Reader, outbound.Writer);
         var payload = await WaitForClosedAsync(
             endpoint,
-            async () => await inbound.Writer.WriteAsync(new ChannelMessage(null), TestContext.Current.CancellationToken));
+            async () =>
+                // Intentionally violate the public non-null contract to verify that malformed
+                // transport input still faults the endpoint deterministically.
+                await inbound.Writer.WriteAsync(new ChannelMessage(null!), TestContext.Current.CancellationToken));
         Assert.IsType<InvalidOperationException>(payload.Error);
     }
 
@@ -277,6 +518,47 @@ public class ChannelPipeTests
         var actual = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await pending.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
         Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task InboundListenerException_FaultsActiveStreamOnPairedEndpointWithOriginalCause()
+    {
+        using var pipe = new ChannelPipe();
+        var streamDefinition = new InvokeEventDefinition<int, int>("channel:stream-peer-fault");
+        var faultingDefinition = new EventDefinition<TestPayload>("channel:stream-peer-listener-fault");
+        var expected = new InvalidOperationException("listener failed");
+
+        using var _ = pipe.Right.RegisterStreamHandler(streamDefinition, PendingAsync);
+        await using var enumerator = pipe.Left
+            .CreateInvokeStreamClient(streamDefinition)
+            .InvokeAsync(1, CancellationToken.None)
+            .GetAsyncEnumerator(TestContext.Current.CancellationToken);
+        var pendingMoveNext = enumerator.MoveNextAsync().AsTask();
+
+        using var __ = pipe.Left.Subscribe(faultingDefinition, _ => throw expected);
+
+        pipe.Right.Emit(faultingDefinition, new TestPayload("boom"));
+
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await pendingMoveNext.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        Assert.Same(expected, actual);
+    }
+
+    [Fact]
+    public async Task Dispose_WhenClosedEventListenerThrows_StillFaultsPendingInvoke()
+    {
+        using var pipe = new ChannelPipe();
+        var definition = new InvokeEventDefinition<string, string>("channel:dispose-closed-listener-fault");
+        var client = pipe.Left.CreateInvokeClient(definition);
+        var pending = client.InvokeAsync("request", CancellationToken.None);
+
+        using var _ = pipe.Left.Subscribe(ChannelEvents.Closed, _ => throw new InvalidOperationException("closed listener failed"));
+
+        pipe.Left.Dispose();
+
+        var error = await Assert.ThrowsAsync<ChannelClosedException>(
+            async () => await pending.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        Assert.Equal("Channel endpoint disposed.", error.Message);
     }
 
     [Fact]
@@ -332,6 +614,14 @@ public class ChannelPipeTests
             cancellationToken.ThrowIfCancellationRequested();
             yield return value;
         }
+    }
+
+    private static async IAsyncEnumerable<int> PendingAsync(
+        int _,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        yield break;
     }
 
     private static async IAsyncEnumerable<int> Numbers(params int[] values)
@@ -411,6 +701,30 @@ public class ChannelPipeTests
         Assert.Throws<ObjectDisposedException>(() => _ = source.Token);
     }
 
+    private static void AssertDisposed(Action action)
+    {
+        var error = Assert.Throws<ChannelClosedException>(action);
+        Assert.Equal("Channel endpoint disposed.", error.Message);
+    }
+
+    private static ClosedObserver CreateSingleClosedObserver(IEventContext context, string side)
+    {
+        var observer = new ClosedObserver(
+            new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously));
+        observer.Subscription = context.Subscribe(ChannelEvents.Closed, _ =>
+        {
+            if (Interlocked.Increment(ref observer.Count) == 1)
+            {
+                observer.Observed.TrySetResult(true);
+                return;
+            }
+
+            observer.Observed.TrySetException(new InvalidOperationException($"{side} closed event observed more than once."));
+        });
+
+        return observer;
+    }
+
     private static async Task<List<T>> CollectAsync<T>(IAsyncEnumerable<T> source)
     {
         var results = new List<T>();
@@ -421,6 +735,116 @@ public class ChannelPipeTests
         }
 
         return results;
+    }
+
+    private sealed class ClosedObserver(TaskCompletionSource<bool> observed)
+    {
+        public IDisposable Subscription { get; set; } = null!;
+
+        public TaskCompletionSource<bool> Observed { get; } = observed;
+
+        public int Count;
+    }
+
+    private sealed class ProbeRejectingWriter : ChannelWriter<ChannelMessage>
+    {
+        public int WriteAsyncCalls;
+
+        public override bool TryComplete(Exception? error = null)
+        {
+            return true;
+        }
+
+        public override bool TryWrite(ChannelMessage item)
+        {
+            return false;
+        }
+
+        public override ValueTask<bool> WaitToWriteAsync(CancellationToken cancellationToken = default)
+        {
+            return ValueTask.FromResult(true);
+        }
+
+        public override ValueTask WriteAsync(ChannelMessage item, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref WriteAsyncCalls);
+            return ValueTask.FromException(new InvalidOperationException("WriteAsync should not be called."));
+        }
+    }
+
+    private sealed class ProbePendingWaitWriter : ChannelWriter<ChannelMessage>, IValueTaskSource<bool>
+    {
+        private ManualResetValueTaskSourceCore<bool> _wait = new()
+        {
+            RunContinuationsAsynchronously = true
+        };
+
+        private CancellationTokenRegistration _cancellationRegistration;
+        private readonly TaskCompletionSource<bool> _observed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int WaitToWriteCalls;
+        public int CanceledWaits;
+        public int GetResultCalls;
+        public int WriteAsyncCalls;
+
+        public Task ObservedTask => _observed.Task;
+
+        public override bool TryComplete(Exception? error = null)
+        {
+            return true;
+        }
+
+        public override bool TryWrite(ChannelMessage item)
+        {
+            return false;
+        }
+
+        public override ValueTask<bool> WaitToWriteAsync(CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref WaitToWriteCalls);
+
+            _cancellationRegistration = cancellationToken.Register(() =>
+            {
+                Interlocked.Increment(ref CanceledWaits);
+                _wait.SetException(new OperationCanceledException(cancellationToken));
+            });
+
+            return new ValueTask<bool>(this, _wait.Version);
+        }
+
+        public override ValueTask WriteAsync(ChannelMessage item, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref WriteAsyncCalls);
+            return ValueTask.FromException(new InvalidOperationException("WriteAsync should not be called."));
+        }
+
+        bool IValueTaskSource<bool>.GetResult(short token)
+        {
+            try
+            {
+                return _wait.GetResult(token);
+            }
+            finally
+            {
+                _cancellationRegistration.Dispose();
+                Interlocked.Increment(ref GetResultCalls);
+                _observed.TrySetResult(true);
+            }
+        }
+
+        ValueTaskSourceStatus IValueTaskSource<bool>.GetStatus(short token)
+        {
+            return _wait.GetStatus(token);
+        }
+
+        void IValueTaskSource<bool>.OnCompleted(
+            Action<object?> continuation,
+            object? state,
+            short token,
+            ValueTaskSourceOnCompletedFlags flags)
+        {
+            _wait.OnCompleted(continuation, state, token, flags);
+        }
     }
 
     private sealed record TestPayload(string Value);

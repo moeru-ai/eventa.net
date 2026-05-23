@@ -5,11 +5,9 @@ namespace Eventa.Adapters.Channels;
 /// <summary>
 /// Carries one Eventa envelope and optional adapter metadata across an in-process channel.
 /// </summary>
-/// <param name="Envelope">The already-created Eventa envelope, or <see langword="null"/> for a malformed message.</param>
+/// <param name="Envelope">The already-created Eventa envelope.</param>
 /// <param name="Options">Optional adapter metadata associated with the envelope.</param>
-public sealed record ChannelMessage(
-    IEventEnvelope? Envelope,
-    object? Options = null);
+public sealed record ChannelMessage(IEventEnvelope Envelope, object? Options = null);
 
 /// <summary>
 /// Payload emitted when a channel endpoint observes terminal transport closure.

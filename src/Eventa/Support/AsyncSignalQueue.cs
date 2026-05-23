@@ -15,7 +15,10 @@ internal sealed class AsyncSignalQueue<T>
     {
         SingleReader = false,
         SingleWriter = false,
-        AllowSynchronousContinuations = false,
+        // Stream invoke sessions surface transport-fatal completion through this queue. Running
+        // wait continuations inline keeps a pending MoveNextAsync faulted before channel adapters
+        // continue on to their public closed-event dispatch, which is the RFC 1 ordering contract.
+        AllowSynchronousContinuations = true,
     };
 
     private readonly Channel<T> _channel = Channel.CreateUnbounded<T>(ChannelOptions);
