@@ -876,7 +876,7 @@ Eventa.sln
 │   │   ├── StreamTests.cs
 │   │   └── MatchExpressionTests.cs
 │   │
-│   └── Eventa.Adapters.Tests/           # Adapter integration tests
+│   └── Eventa.Adapters.Channels.Tests/  # Channel adapter integration tests
 │
 └── samples/
     ├── Eventa.Sample.Console/           # Console sample
@@ -888,6 +888,7 @@ Eventa.sln
 | Package | Contents | Dependencies |
 |------|------|------|
 | `Eventa` | Event definitions, Context, Invoke, Stream | No external dependencies |
+| `Eventa.Adapters.Channels` | System.Threading.Channels adapter package | Separate from `Eventa` |
 | `Eventa.Adapters.WebSocket` | WebSocket adapter package | Separate from `Eventa` |
 | `Eventa.Adapters.SignalR` | SignalR adapter package | Separate from `Eventa` |
 | `Eventa.Adapters.Grpc` | gRPC adapter package | Separate from `Eventa` |

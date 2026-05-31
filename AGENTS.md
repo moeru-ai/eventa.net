@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This is a .NET 10 solution centered on `Eventa.slnx`. Core library code lives in `src/Eventa`, and transport/adapter code lives in `src/Eventa.Adapters` with channel adapter types under `Channels`. Tests mirror that split in `tests/Eventa.Tests` and `tests/Eventa.Adapters.Tests`. `examples/Eventa.Example` is the console sample used to validate public API ergonomics. Design notes and RFCs belong in `docs`; generated build output belongs in `artifacts` and should not be edited by hand.
+This is a .NET 10 solution centered on `Eventa.slnx`. Core library code lives in `src/Eventa`, and the System.Threading.Channels adapter package lives in `src/Eventa.Adapters.Channels`. Tests mirror that split in `tests/Eventa.Tests` and `tests/Eventa.Adapters.Channels.Tests`. `examples/Eventa.Example` is the console sample used to validate public API ergonomics. Design notes and RFCs belong in `docs`; generated build output belongs in `artifacts` and should not be edited by hand.
 
 ## Build, Test, and Development Commands
 
@@ -12,7 +12,7 @@ Use the .NET 10 SDK. Common commands:
 dotnet restore Eventa.slnx --locked-mode
 dotnet build Eventa.slnx --configuration Release --no-restore
 dotnet test --project tests/Eventa.Tests/Eventa.Tests.csproj --configuration Release --no-build
-dotnet test --project tests/Eventa.Adapters.Tests/Eventa.Adapters.Tests.csproj --configuration Release --no-build
+dotnet test --project tests/Eventa.Adapters.Channels.Tests/Eventa.Adapters.Channels.Tests.csproj --configuration Release --no-build
 dotnet run --project examples/Eventa.Example/Eventa.Example.csproj --configuration Release --no-restore
 ```
 

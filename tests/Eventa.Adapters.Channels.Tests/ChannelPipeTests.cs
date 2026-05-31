@@ -8,7 +8,7 @@ using Eventa.Adapters.Channels;
 using ChannelClosedException = Eventa.Adapters.Channels.ChannelClosedException;
 using SystemChannelClosedException = System.Threading.Channels.ChannelClosedException;
 
-namespace Eventa.Adapters.Tests.Channels;
+namespace Eventa.Adapters.Channels.Tests;
 
 public class ChannelPipeTests
 {
