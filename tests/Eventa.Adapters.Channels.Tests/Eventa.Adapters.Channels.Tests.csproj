@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <RootNamespace>Eventa.Adapters.Tests</RootNamespace>
+    <RootNamespace>Eventa.Adapters.Channels.Tests</RootNamespace>
     <OutputType>Exe</OutputType>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -21,7 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Eventa\Eventa.csproj" />
-    <ProjectReference Include="..\..\src\Eventa.Adapters\Eventa.Adapters.csproj" />
+    <ProjectReference Include="..\..\src\Eventa.Adapters.Channels\Eventa.Adapters.Channels.csproj" />
     <PackageReference Include="xunit.v3.mtp-v2" Version="3.2.2" />
   </ItemGroup>
 

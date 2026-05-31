@@ -3,11 +3,11 @@
     <Project Path="examples/Eventa.Example/Eventa.Example.csproj" />
   </Folder>
   <Folder Name="/src/">
-    <Project Path="src/Eventa.Adapters/Eventa.Adapters.csproj" />
+    <Project Path="src/Eventa.Adapters.Channels/Eventa.Adapters.Channels.csproj" />
     <Project Path="src/Eventa/Eventa.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/Eventa.Adapters.Tests/Eventa.Adapters.Tests.csproj" />
+    <Project Path="tests/Eventa.Adapters.Channels.Tests/Eventa.Adapters.Channels.Tests.csproj" />
     <Project Path="tests/Eventa.Tests/Eventa.Tests.csproj" />
   </Folder>
 </Solution>
