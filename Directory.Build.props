@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionSuffix>preview.2</VersionSuffix>
+  </PropertyGroup>
+</Project>
