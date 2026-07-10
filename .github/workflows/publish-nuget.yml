@@ -32,8 +32,8 @@ jobs:
       - name: Build
         run: dotnet build Eventa.slnx --configuration Release --no-restore
 
-      - name: Pack
-        run: dotnet pack src/Eventa/Eventa.csproj --configuration Release --no-build -o artifacts/package
+      - name: Pack packages
+        run: dotnet pack Eventa.slnx --configuration Release --no-build -o artifacts/package
 
       - name: NuGet login
         id: login
@@ -41,5 +41,7 @@ jobs:
         with:
           user: ${{ secrets.NUGET_USER }}
 
-      - name: Push package
-        run: dotnet nuget push artifacts/package/*.nupkg --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+      - name: Push Eventa package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dotnet nuget push "artifacts/package/Eventa.$version.nupkg" --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate

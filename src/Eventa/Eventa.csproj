@@ -6,7 +6,6 @@
     <Nullable>enable</Nullable>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Eventa</PackageId>
-    <Version>0.1.0-preview.2</Version>
     <Authors>Moeru AI;Garfield550</Authors>
     <Description>Transport-agnostic, type-safe events for .NET with ergonomic request/response and streaming invoke flows.</Description>
     <PackageTags>events;event-driven;rpc;streaming;dotnet;aot</PackageTags>
@@ -21,8 +20,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="FSharp.Core" Version="11.0.100" />
-    <PackageReference Include="pblasucci.ananoid" Version="2.0.0" />
+    <PackageReference Include="FSharp.Core" />
+    <PackageReference Include="pblasucci.ananoid" />
   </ItemGroup>
 
   <ItemGroup>
