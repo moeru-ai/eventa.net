@@ -58,13 +58,11 @@ Eventa is available on NuGet:
 
 ```sh
 dotnet add package Eventa --prerelease
-dotnet add package Eventa.Adapters.Channels --prerelease
 ```
 
 Package pages:
 
 - <https://www.nuget.org/packages/Eventa/>
-- <https://www.nuget.org/packages/Eventa.Adapters.Channels/>
 
 ## Getting Started
 
@@ -74,8 +72,7 @@ To run the repository examples locally:
 ```sh
 dotnet restore Eventa.slnx --locked-mode
 dotnet build Eventa.slnx --configuration Release --no-restore
-dotnet test --project tests/Eventa.Tests/Eventa.Tests.csproj --configuration Release --no-build
-dotnet test --project tests/Eventa.Adapters.Channels.Tests/Eventa.Adapters.Channels.Tests.csproj --configuration Release --no-build
+dotnet test --project tests/Eventa.Tests.csproj --configuration Release --no-build
 dotnet run --project examples/Eventa.Example/Eventa.Example.csproj --configuration Release --no-restore
 ```
 
@@ -209,21 +206,22 @@ usable as an `IEventContext`. The v1 channel adapter is in-process and
 object-only; it forwards existing typed envelopes through
 `System.Threading.Channels` and does not serialize payloads. Default
 `ChannelPipe` channels are unbounded and intended for local composition, tests,
-and same-process boundaries, not as a throughput or backpressure policy. Both
-`Eventa` and `Eventa.Adapters.Channels` enable `IsAotCompatible=true`; the current
-Release builds run cleanly under the trim and Native AOT analyzers, and the
-channel adapter keeps its transport path free of reflection, dynamic dispatch,
-and runtime generic construction.
+and same-process boundaries, not as a throughput or backpressure policy. The
+`Eventa` package, including the channel adapter, enables
+`IsAotCompatible=true`; the channel transport path avoids reflection, dynamic
+dispatch, and runtime generic construction.
 
 ## Project Layout
 
 ```text
 .
 +-- Eventa.slnx
-+-- src/Eventa/                    # Core library
-+-- src/Eventa.Adapters.Channels/  # Channel adapter library
-+-- tests/Eventa.Tests/            # xUnit v3 tests on Microsoft.Testing.Platform
-+-- tests/Eventa.Adapters.Channels.Tests/ # Channel adapter tests
++-- src/Eventa.csproj              # Eventa package project
++-- src/Eventa/                    # Core library source
++-- src/Eventa.Adapters/Channels/  # Channel adapter source
++-- tests/Eventa.Tests.csproj      # xUnit v3 tests on Microsoft.Testing.Platform
++-- tests/Eventa/                  # Core tests
++-- tests/Eventa.Adapters/Channels/ # Channel adapter tests
 +-- examples/Eventa.Example/       # Console examples
 +-- docs/                          # Design and compatibility notes
 ```
@@ -235,8 +233,7 @@ Useful commands:
 ```sh
 dotnet restore Eventa.slnx --locked-mode
 dotnet build Eventa.slnx --configuration Release --no-restore
-dotnet test --project tests/Eventa.Tests/Eventa.Tests.csproj --configuration Release --no-build
-dotnet test --project tests/Eventa.Adapters.Channels.Tests/Eventa.Adapters.Channels.Tests.csproj --configuration Release --no-build
+dotnet test --project tests/Eventa.Tests.csproj --configuration Release --no-build
 dotnet run --project examples/Eventa.Example/Eventa.Example.csproj --configuration Release --no-restore
 ```
 

@@ -755,8 +755,11 @@ transport that requires it.
 
 ### Adapter Depending on Core Internals
 
-Rejected. Adapter packages are intended to be separate from the core package, so
-the inbound transport boundary must be public and stable.
+The RFC rejected coupling a separately packaged adapter to core internals. The
+implementation later included the Channels adapter in the `Eventa` assembly, so
+that package-boundary rationale is superseded. The adapter continues to use the
+public inbound transport boundary, which also remains suitable for external
+adapters.
 
 ## Open Questions
 
