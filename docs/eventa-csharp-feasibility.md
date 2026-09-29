@@ -841,10 +841,11 @@ public class StreamTests
 
 ## 6. Recommended Project Structure
 
-This section is retained as migration planning history. The published `Eventa`
-package contains the core Eventa event, invoke, stream, and context APIs.
-Adapter packages are separate from `Eventa` and are not included in the core
-package.
+This section records the original migration proposal. The current implementation
+publishes the core Eventa event, invoke, stream, and context APIs together with
+the Channels adapter in the `Eventa` package. Adapter namespaces remain under
+`Eventa.Adapters.*`; future transport adapters can still be evaluated as
+separate packages.
 
 ```sh
 dotnet add package Eventa --prerelease
@@ -883,7 +884,7 @@ Eventa.sln
     └── Eventa.Sample.WebApi/            # ASP.NET Core sample
 ```
 
-**Conceptual package layout**:
+**Original proposed package layout (historical)**:
 
 | Package | Contents | Dependencies |
 |------|------|------|
