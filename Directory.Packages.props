@@ -5,7 +5,7 @@
 
   <ItemGroup>
     <PackageVersion Include="FSharp.Core" Version="11.0.100" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.7" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
     <PackageVersion Include="pblasucci.ananoid" Version="2.0.0" />
     <PackageVersion Include="xunit.v3.mtp-v2" Version="3.2.2" />
   </ItemGroup>
