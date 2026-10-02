@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "analyzing-dotnet-performance": {
+      "source": "dotnet/skills",
+      "sourceType": "github",
+      "skillPath": "plugins/dotnet-diag/skills/analyzing-dotnet-performance/SKILL.md",
+      "computedHash": "88e4ef0fbace90c8606466966634e597fad09951878fbf9332df7b98bd9924ee"
+    },
+    "dotnet-aot-compat": {
+      "source": "dotnet/skills",
+      "sourceType": "github",
+      "skillPath": "plugins/dotnet-upgrade/skills/dotnet-aot-compat/SKILL.md",
+      "computedHash": "71e462a0382d3d07a858d466e8465a2faa62dc2bf7526e7b9928db13b9961602"
+    },
+    "dotnet-best-practices": {
+      "source": "github/awesome-copilot",
+      "sourceType": "github",
+      "skillPath": "skills/dotnet-best-practices/SKILL.md",
+      "computedHash": "9ef94db7f06c167d544369817e5a4415eeb7886dcff0d47026837a1aada260e3"
+    },
+    "dotnet-patterns": {
+      "source": "affaan-m/ecc",
+      "sourceType": "github",
+      "skillPath": "skills/dotnet-patterns/SKILL.md",
+      "computedHash": "a7ff4b3b27a3b4d18de7fa523c39f3df0e60c44e43048d8fa144991bff80b7a5"
+    }
+  }
+}

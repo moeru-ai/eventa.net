@@ -13,13 +13,15 @@ public class EventContextTests
 
         context.Emit(definition, new TestPayload("test"));
 
-        Assert.Equal(
-            new EventEnvelope<TestPayload>("test-event", new TestPayload("test")),
-            received);
+        Assert.Equal(new EventEnvelope<TestPayload>("test-event", new TestPayload("test")), received);
     }
 
     [Fact]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "Keep the handler in a variable so the same handler value is subscribed twice.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Style",
+        "IDE0039:Use local function",
+        Justification = "Keep the handler in a variable so the same handler value is subscribed twice."
+    )]
     public void Subscribe_DeduplicatesTheSameHandlerInstance()
     {
         var context = new EventContext();
@@ -43,19 +45,20 @@ public class EventContextTests
         var callCount = 0;
         EventEnvelope<TestPayload>? firstEnvelope = null;
 
-        using var _ = context.SubscribeOnce(definition, envelope =>
-        {
-            callCount++;
-            firstEnvelope = envelope;
-        });
+        using var _ = context.SubscribeOnce(
+            definition,
+            envelope =>
+            {
+                callCount++;
+                firstEnvelope = envelope;
+            }
+        );
 
         context.Emit(definition, new TestPayload("first"));
         context.Emit(definition, new TestPayload("second"));
 
         Assert.Equal(1, callCount);
-        Assert.Equal(
-            new EventEnvelope<TestPayload>("test-event", new TestPayload("first")),
-            firstEnvelope);
+        Assert.Equal(new EventEnvelope<TestPayload>("test-event", new TestPayload("first")), firstEnvelope);
     }
 
     [Fact]
@@ -65,11 +68,14 @@ public class EventContextTests
         var definition = new EventDefinition<TestPayload>("test-event");
         var callCount = 0;
 
-        using var _ = context.SubscribeOnce(definition, _ =>
-        {
-            callCount++;
-            context.Emit(definition, new TestPayload("reentrant"));
-        });
+        using var _ = context.SubscribeOnce(
+            definition,
+            _ =>
+            {
+                callCount++;
+                context.Emit(definition, new TestPayload("reentrant"));
+            }
+        );
 
         context.Emit(definition, new TestPayload("first"));
 
@@ -107,7 +113,11 @@ public class EventContextTests
     }
 
     [Fact]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "Keep handlers in variables so Off can remove one specific handler value.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Style",
+        "IDE0039:Use local function",
+        Justification = "Keep handlers in variables so Off can remove one specific handler value."
+    )]
     public void Unsubscribe_WithHandler_RemovesOnlyTheRequestedListener()
     {
         var context = new EventContext();
@@ -133,7 +143,11 @@ public class EventContextTests
     }
 
     [Fact]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "Keep handlers in variables so one subscription stays tied to one handler value.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Style",
+        "IDE0039:Use local function",
+        Justification = "Keep handlers in variables so one subscription stays tied to one handler value."
+    )]
     public void ReturnedSubscription_RemovesOnlyTheRequestedListener()
     {
         var context = new EventContext();
@@ -165,7 +179,8 @@ public class EventContextTests
         var definition = new EventDefinition<TestPayload>("test-event");
         var expression = new MatchExpression<TestPayload>(
             "starts-with-match",
-            envelope => envelope.Body.Value.StartsWith("match", StringComparison.Ordinal));
+            envelope => envelope.Body.Value.StartsWith("match", StringComparison.Ordinal)
+        );
         var matchedValues = new List<string>();
 
         using var _ = context.Subscribe(expression, envelope => matchedValues.Add(envelope.Body.Value));
@@ -184,7 +199,8 @@ public class EventContextTests
         var definition = new EventDefinition<TestPayload>("test-event");
         var expression = new MatchExpression<TestPayload>(
             "starts-with-match-once",
-            envelope => envelope.Body.Value.StartsWith("match", StringComparison.Ordinal));
+            envelope => envelope.Body.Value.StartsWith("match", StringComparison.Ordinal)
+        );
         var matchedValues = new List<string>();
 
         using var _ = context.SubscribeOnce(expression, envelope => matchedValues.Add(envelope.Body.Value));
@@ -204,11 +220,14 @@ public class EventContextTests
         var expression = new MatchExpression<TestPayload>("match-all-once", _ => true);
         var callCount = 0;
 
-        using var _ = context.SubscribeOnce(expression, _ =>
-        {
-            callCount++;
-            context.Emit(definition, new TestPayload("reentrant"));
-        });
+        using var _ = context.SubscribeOnce(
+            expression,
+            _ =>
+            {
+                callCount++;
+                context.Emit(definition, new TestPayload("reentrant"));
+            }
+        );
 
         context.Emit(definition, new TestPayload("first"));
 
@@ -233,7 +252,11 @@ public class EventContextTests
     }
 
     [Fact]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0039:Use local function", Justification = "Keep handlers in variables so one subscription stays tied to one handler value.")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage(
+        "Style",
+        "IDE0039:Use local function",
+        Justification = "Keep handlers in variables so one subscription stays tied to one handler value."
+    )]
     public void Unsubscribe_WithMatchExpressionAndHandler_RemovesOnlyTheRequestedListener()
     {
         var context = new EventContext();
@@ -270,7 +293,8 @@ public class EventContextTests
 
         Assert.Equal(
             ["listener", "received:test-event", "match", "received:match-test-event", "sent:test-event"],
-            calls);
+            calls
+        );
     }
 
     [Fact]
@@ -289,13 +313,15 @@ public class EventContextTests
         Assert.Equal("test-event", received.EventId);
         Assert.Equal(
             new EventEnvelope<TestPayload>("test-event", new TestPayload("test")),
-            Assert.IsType<EventEnvelope<TestPayload>>(received.Envelope));
+            Assert.IsType<EventEnvelope<TestPayload>>(received.Envelope)
+        );
 
         var sent = Assert.Single(adapter.SentCalls);
         Assert.Equal("test-event", sent.EventId);
         Assert.Equal(
             new EventEnvelope<TestPayload>("test-event", new TestPayload("test")),
-            Assert.IsType<EventEnvelope<TestPayload>>(sent.Envelope));
+            Assert.IsType<EventEnvelope<TestPayload>>(sent.Envelope)
+        );
     }
 
     [Fact]
@@ -371,7 +397,8 @@ public class EventContextTests
                 "received:remote-event",
                 "received:remote-match",
             ],
-            calls);
+            calls
+        );
     }
 
     [Fact]
@@ -411,7 +438,8 @@ public class EventContextTests
             id: "shared-remote-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Receive");
+            operation: "Receive"
+        );
     }
 
     [Fact]
@@ -452,7 +480,8 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Subscribe");
+            operation: "Subscribe"
+        );
     }
 
     [Fact]
@@ -472,7 +501,8 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "SubscribeOnce");
+            operation: "SubscribeOnce"
+        );
     }
 
     [Fact]
@@ -484,7 +514,9 @@ public class EventContextTests
 
         using var _ = context.Subscribe(firstDefinition, _ => { });
 
-        var error = Assert.Throws<InvalidOperationException>(() => context.Emit(secondDefinition, new SecondPayload(2)));
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            context.Emit(secondDefinition, new SecondPayload(2))
+        );
 
         AssertPayloadTypeInvariant(
             error,
@@ -492,7 +524,8 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Emit");
+            operation: "Emit"
+        );
     }
 
     [Fact]
@@ -512,7 +545,8 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Subscribe");
+            operation: "Subscribe"
+        );
     }
 
     [Fact]
@@ -532,7 +566,8 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Subscribe");
+            operation: "Subscribe"
+        );
     }
 
     [Fact]
@@ -552,7 +587,8 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Unsubscribe");
+            operation: "Unsubscribe"
+        );
     }
 
     [Fact]
@@ -574,7 +610,8 @@ public class EventContextTests
             id: "shared-event",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Subscribe");
+            operation: "Subscribe"
+        );
     }
 
     [Fact]
@@ -614,7 +651,8 @@ public class EventContextTests
             id: "shared-match",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Subscribe");
+            operation: "Subscribe"
+        );
     }
 
     [Fact]
@@ -634,7 +672,8 @@ public class EventContextTests
             id: "shared-match-once",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "SubscribeOnce");
+            operation: "SubscribeOnce"
+        );
     }
 
     [Fact]
@@ -656,7 +695,8 @@ public class EventContextTests
             id: "shared-match-unsubscribe",
             boundType: typeof(FirstPayload),
             currentType: typeof(SecondPayload),
-            operation: "Subscribe");
+            operation: "Subscribe"
+        );
     }
 
     private static void AssertPayloadTypeInvariant(
@@ -665,7 +705,8 @@ public class EventContextTests
         string id,
         Type boundType,
         Type currentType,
-        string operation)
+        string operation
+    )
     {
         Assert.Contains(bindingTarget, error.Message, StringComparison.Ordinal);
         Assert.Contains(id, error.Message, StringComparison.Ordinal);
@@ -675,15 +716,17 @@ public class EventContextTests
     }
 
     private sealed record TestPayload(string Value);
+
     private sealed record FirstPayload(string Value);
+
     private sealed record SecondPayload(int Value);
+
     private sealed record EmitOptions(string Source);
-    private sealed record TestEnvelope(
-        string EventId,
-        Type PayloadType,
-        object? UntypedBody) : IEventEnvelope;
+
+    private sealed record TestEnvelope(string EventId, Type PayloadType, object? UntypedBody) : IEventEnvelope;
 
     private sealed record AdapterSentCall(string EventId, object? Envelope, object? Options);
+
     private sealed record AdapterReceivedCall(string EventId, object? Envelope, object? Options);
 
     private sealed class RecordingAdapter(List<string> calls) : IEventaAdapter

@@ -1,5 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Eventa.Tests</RootNamespace>
@@ -28,5 +27,4 @@
     <ProjectReference Include="..\src\Eventa.csproj" />
     <PackageReference Include="xunit.v3.mtp-v2" />
   </ItemGroup>
-
 </Project>

@@ -19,10 +19,12 @@ public class InvokeSessionEngineTests
             bindings,
             SendDispatchMode.InlineAfterCancellationArmed,
             (_, _) => Task.FromException(expected),
-            CancellationToken.None);
+            CancellationToken.None
+        );
 
-        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await engine.Run().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await engine.Run().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)
+        );
 
         Assert.Same(expected, actual);
         Assert.Equal(0, abortCount);
@@ -49,10 +51,12 @@ public class InvokeSessionEngineTests
                 await Task.Yield();
                 throw expected;
             },
-            CancellationToken.None);
+            CancellationToken.None
+        );
 
-        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await engine.Run().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await engine.Run().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)
+        );
 
         Assert.Same(expected, actual);
         Assert.Equal(0, abortCount);
@@ -75,10 +79,12 @@ public class InvokeSessionEngineTests
             bindings,
             SendDispatchMode.InlineAfterCancellationArmed,
             (_, _) => Task.FromException(expected),
-            CancellationToken.None);
+            CancellationToken.None
+        );
 
-        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await DrainAsync(engine.Run()).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await DrainAsync(engine.Run()).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)
+        );
 
         Assert.Same(expected, actual);
         Assert.Equal(0, abortCount);
@@ -105,10 +111,12 @@ public class InvokeSessionEngineTests
                 await Task.Yield();
                 throw expected;
             },
-            CancellationToken.None);
+            CancellationToken.None
+        );
 
-        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await DrainAsync(engine.Run()).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await DrainAsync(engine.Run()).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)
+        );
 
         Assert.Same(expected, actual);
         Assert.Equal(0, abortCount);
@@ -131,8 +139,9 @@ public class InvokeSessionEngineTests
 
         notifier.NotifyTransportFatal(expected);
 
-        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await pending.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await pending.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)
+        );
 
         Assert.Same(expected, actual);
         Assert.Equal(0, abortCount);
@@ -156,8 +165,9 @@ public class InvokeSessionEngineTests
 
         notifier.NotifyTransportFatal(expected);
 
-        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await pending.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await pending.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)
+        );
 
         Assert.Same(expected, actual);
         Assert.Equal(0, abortCount);
@@ -165,7 +175,6 @@ public class InvokeSessionEngineTests
 
     private static async Task DrainAsync<T>(IAsyncEnumerable<T> stream)
     {
-        await foreach (var _ in stream.WithCancellation(TestContext.Current.CancellationToken))
-        { }
+        await foreach (var _ in stream.WithCancellation(TestContext.Current.CancellationToken)) { }
     }
 }

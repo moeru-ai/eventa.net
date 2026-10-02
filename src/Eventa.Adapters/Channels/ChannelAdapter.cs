@@ -22,7 +22,8 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
         if (envelope is not IEventEnvelope eventEnvelope)
         {
             throw new InvalidOperationException(
-                $"Event '{eventId}' was sent with an envelope that does not implement {nameof(IEventEnvelope)}.");
+                $"Event '{eventId}' was sent with an envelope that does not implement {nameof(IEventEnvelope)}."
+            );
         }
 
         var message = new ChannelMessage(eventEnvelope, options);
@@ -72,7 +73,8 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
     /// <param name="waitToWriteCancellation">The cancellation source that aborts the probe.</param>
     private static void CancelAndObservePendingWait(
         ValueTask<bool> waitToWrite,
-        CancellationTokenSource waitToWriteCancellation)
+        CancellationTokenSource waitToWriteCancellation
+    )
     {
         // Consume the pending wait even after canceling it so pooled
         // IValueTaskSource-backed channel waiters are not abandoned.
@@ -87,6 +89,7 @@ internal sealed class ChannelAdapter(ChannelWriter<ChannelMessage> outbound) : I
             },
             CancellationToken.None,
             TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
+            TaskScheduler.Default
+        );
     }
 }

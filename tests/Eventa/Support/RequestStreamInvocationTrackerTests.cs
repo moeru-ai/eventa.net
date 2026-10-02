@@ -11,23 +11,33 @@ public class RequestStreamInvocationTrackerTests
         var secondExecutionStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var firstGetOrCreate = Task.Run(
-            () => tracker.GetOrCreate("first", _ =>
-            {
-                firstExecutionStarted.TrySetResult(true);
-                releaseFirstExecution.Task.GetAwaiter().GetResult();
-                return Task.CompletedTask;
-            }),
-            TestContext.Current.CancellationToken);
+            () =>
+                tracker.GetOrCreate(
+                    "first",
+                    _ =>
+                    {
+                        firstExecutionStarted.TrySetResult(true);
+                        releaseFirstExecution.Task.GetAwaiter().GetResult();
+                        return Task.CompletedTask;
+                    }
+                ),
+            TestContext.Current.CancellationToken
+        );
 
         await firstExecutionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
         var secondGetOrCreate = Task.Run(
-            () => tracker.GetOrCreate("second", _ =>
-            {
-                secondExecutionStarted.TrySetResult(true);
-                return Task.CompletedTask;
-            }),
-            TestContext.Current.CancellationToken);
+            () =>
+                tracker.GetOrCreate(
+                    "second",
+                    _ =>
+                    {
+                        secondExecutionStarted.TrySetResult(true);
+                        return Task.CompletedTask;
+                    }
+                ),
+            TestContext.Current.CancellationToken
+        );
 
         try
         {
@@ -48,14 +58,16 @@ public class RequestStreamInvocationTrackerTests
         var expected = new InvalidOperationException("boom");
         var successfulStarts = 0;
 
-        var error = Assert.Throws<InvalidOperationException>(() =>
-            tracker.GetOrCreate("invoke", _ => throw expected));
+        var error = Assert.Throws<InvalidOperationException>(() => tracker.GetOrCreate("invoke", _ => throw expected));
 
-        var state = tracker.GetOrCreate("invoke", _ =>
-        {
-            Interlocked.Increment(ref successfulStarts);
-            return Task.CompletedTask;
-        });
+        var state = tracker.GetOrCreate(
+            "invoke",
+            _ =>
+            {
+                Interlocked.Increment(ref successfulStarts);
+                return Task.CompletedTask;
+            }
+        );
 
         Assert.Same(expected, error);
         Assert.Equal("invoke", state.InvokeId);
@@ -68,25 +80,34 @@ public class RequestStreamInvocationTrackerTests
     {
         var tracker = new RequestStreamInvocationTracker<int>();
         var startCount = 0;
-        var stale = tracker.GetOrCreate("invoke", _ =>
-        {
-            Interlocked.Increment(ref startCount);
-            return Task.CompletedTask;
-        });
+        var stale = tracker.GetOrCreate(
+            "invoke",
+            _ =>
+            {
+                Interlocked.Increment(ref startCount);
+                return Task.CompletedTask;
+            }
+        );
 
         tracker.Remove(stale);
-        var current = tracker.GetOrCreate("invoke", _ =>
-        {
-            Interlocked.Increment(ref startCount);
-            return Task.CompletedTask;
-        });
+        var current = tracker.GetOrCreate(
+            "invoke",
+            _ =>
+            {
+                Interlocked.Increment(ref startCount);
+                return Task.CompletedTask;
+            }
+        );
 
         tracker.Remove(stale);
-        var resolved = tracker.GetOrCreate("invoke", _ =>
-        {
-            Interlocked.Increment(ref startCount);
-            return Task.CompletedTask;
-        });
+        var resolved = tracker.GetOrCreate(
+            "invoke",
+            _ =>
+            {
+                Interlocked.Increment(ref startCount);
+                return Task.CompletedTask;
+            }
+        );
 
         Assert.Same(current, resolved);
         Assert.Equal(2, Volatile.Read(ref startCount));

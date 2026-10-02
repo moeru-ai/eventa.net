@@ -21,9 +21,7 @@ public sealed record MatchExpression<TPayload>(string Id, Func<EventEnvelope<TPa
     /// The optional stable identifier for the expression. When omitted, Eventa generates one.
     /// </param>
     /// <returns>A new <see cref="MatchExpression{TPayload}"/> instance.</returns>
-    public static MatchExpression<TPayload> Create(
-        Func<EventEnvelope<TPayload>, bool> matcher,
-        string? id = null)
+    public static MatchExpression<TPayload> Create(Func<EventEnvelope<TPayload>, bool> matcher, string? id = null)
     {
         ArgumentNullException.ThrowIfNull(matcher);
         return new MatchExpression<TPayload>(id ?? IdGenerator.New(), matcher);

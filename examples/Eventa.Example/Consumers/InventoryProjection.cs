@@ -19,6 +19,7 @@ public sealed class InventoryProjection(IEventContext context)
                 var sign = change.Delta >= 0 ? "+" : string.Empty;
 
                 _changes.Add($"{change.Sku}:{sign}{change.Delta} -> {change.QuantityOnHand}");
-            });
+            }
+        );
     }
 }

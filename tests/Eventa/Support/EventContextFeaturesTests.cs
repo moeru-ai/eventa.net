@@ -20,13 +20,7 @@ public class EventContextFeaturesTests
     [Fact]
     public void GetOrCreateFeature_WhenStoredValueHasDifferentType_ReplacesIt()
     {
-        var context = new EventContext
-        {
-            Extensions =
-            {
-                ["feature"] = "wrong shape",
-            },
-        };
+        var context = new EventContext { Extensions = { ["feature"] = "wrong shape" } };
 
         var feature = context.GetOrCreateFeature<TestFeature>("feature");
 
@@ -36,13 +30,7 @@ public class EventContextFeaturesTests
     [Fact]
     public void TryGetFeature_ReturnsFalseWhenTheKeyIsMissingOrHasADifferentType()
     {
-        var context = new EventContext
-        {
-            Extensions =
-            {
-                ["feature"] = "wrong shape",
-            },
-        };
+        var context = new EventContext { Extensions = { ["feature"] = "wrong shape" } };
 
         Assert.False(context.TryGetFeature<TestFeature>("missing", out var missing));
         Assert.Null(missing);

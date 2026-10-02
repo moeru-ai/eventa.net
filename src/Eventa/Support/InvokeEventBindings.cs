@@ -65,7 +65,8 @@ internal readonly record struct InvokeEventBindings<TResponse, TRequest>(
     EventDefinition<AbortPayload> SendAbort,
     EventDefinition<ReceivePayload<TResponse>> Receive,
     EventDefinition<ReceiveErrorPayload> ReceiveError,
-    EventDefinition<StreamEndPayload> ReceiveStreamEnd)
+    EventDefinition<StreamEndPayload> ReceiveStreamEnd
+)
 {
     /// <summary>
     /// Creates the concrete event bindings for the invoke or stream protocol identified by
@@ -79,6 +80,6 @@ internal readonly record struct InvokeEventBindings<TResponse, TRequest>(
             new EventDefinition<AbortPayload>(definition.SendAbortId),
             new EventDefinition<ReceivePayload<TResponse>>(definition.ReceiveEventId),
             new EventDefinition<ReceiveErrorPayload>(definition.ReceiveErrorId),
-            new EventDefinition<StreamEndPayload>(definition.ReceiveStreamEndId))
-    { }
+            new EventDefinition<StreamEndPayload>(definition.ReceiveStreamEndId)
+        ) { }
 }

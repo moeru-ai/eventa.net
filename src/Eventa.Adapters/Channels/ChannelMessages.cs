@@ -23,8 +23,7 @@ public static class ChannelEvents
     /// <summary>
     /// Gets the event emitted locally when a channel endpoint closes.
     /// </summary>
-    public static EventDefinition<ChannelClosedPayload> Closed { get; } =
-        new("eventa:channels:closed");
+    public static EventDefinition<ChannelClosedPayload> Closed { get; } = new("eventa:channels:closed");
 }
 
 /// <summary>
@@ -36,12 +35,14 @@ public sealed class ChannelClosedException : Exception
     /// Creates a channel-closed exception with a message.
     /// </summary>
     /// <param name="message">The exception message.</param>
-    public ChannelClosedException(string message) : base(message) { }
+    public ChannelClosedException(string message)
+        : base(message) { }
 
     /// <summary>
     /// Creates a channel-closed exception with a message and underlying cause.
     /// </summary>
     /// <param name="message">The exception message.</param>
     /// <param name="innerException">The underlying terminal cause.</param>
-    public ChannelClosedException(string message, Exception innerException) : base(message, innerException) { }
+    public ChannelClosedException(string message, Exception innerException)
+        : base(message, innerException) { }
 }

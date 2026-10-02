@@ -8,8 +8,10 @@ public class InvokeTests
         var context = new EventContext();
         var definition = new InvokeEventDefinition<UserResponse, UserRequest>("user-lookup");
 
-        using var _ = context.RegisterInvokeHandler(definition,
-            (request, _) => Task.FromResult(new UserResponse($"{request.Name}-{request.Age}")));
+        using var _ = context.RegisterInvokeHandler(
+            definition,
+            (request, _) => Task.FromResult(new UserResponse($"{request.Name}-{request.Age}"))
+        );
 
         var client = context.CreateInvokeClient(definition);
         var result = await client.InvokeAsync(new UserRequest("alice", 25), CancellationToken.None);
@@ -24,14 +26,19 @@ public class InvokeTests
         var definition = new InvokeEventDefinition<UserResponse, UserRequest>("user-lookup");
         var factoryCalls = 0;
 
-        using var _ = context.RegisterInvokeHandler(definition,
-            (request, _) => Task.FromResult(new UserResponse($"{request.Name}-{request.Age}")));
+        using var _ = context.RegisterInvokeHandler(
+            definition,
+            (request, _) => Task.FromResult(new UserResponse($"{request.Name}-{request.Age}"))
+        );
 
-        var client = EventInvoke.CreateInvokeClient(() =>
-        {
-            factoryCalls++;
-            return context;
-        }, definition);
+        var client = EventInvoke.CreateInvokeClient(
+            () =>
+            {
+                factoryCalls++;
+                return context;
+            },
+            definition
+        );
 
         var result = await client.InvokeAsync(new UserRequest("alice", 25), CancellationToken.None);
 
@@ -45,14 +52,18 @@ public class InvokeTests
         var context = new EventContext();
         var definition = new InvokeEventDefinition<UserResponse, UserRequest>("user-lookup");
 
-        using var _ = context.RegisterInvokeHandler(definition,
-            (request, _) => Task.FromException<UserResponse>(
-                new InvalidOperationException(
-                    $"Error processing request for {request.Name} aged {request.Age}")));
+        using var _ = context.RegisterInvokeHandler(
+            definition,
+            (request, _) =>
+                Task.FromException<UserResponse>(
+                    new InvalidOperationException($"Error processing request for {request.Name} aged {request.Age}")
+                )
+        );
 
         var client = context.CreateInvokeClient(definition);
-        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.InvokeAsync(new UserRequest("alice", 25), CancellationToken.None));
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.InvokeAsync(new UserRequest("alice", 25), CancellationToken.None)
+        );
 
         Assert.Equal("Error processing request for alice aged 25", actual.Message);
     }
@@ -64,12 +75,15 @@ public class InvokeTests
         var definition = new InvokeEventDefinition<string, string>("user-lookup");
         var expected = new InvalidOperationException("invoke handler failed");
 
-        using var _ = context.RegisterInvokeHandler(definition,
-            (string _, CancellationToken _) => Task.FromException<string>(expected));
+        using var _ = context.RegisterInvokeHandler(
+            definition,
+            (string _, CancellationToken _) => Task.FromException<string>(expected)
+        );
 
         var client = context.CreateInvokeClient(definition);
-        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.InvokeAsync("request", CancellationToken.None));
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.InvokeAsync("request", CancellationToken.None)
+        );
 
         Assert.Same(expected, actual);
     }
@@ -81,13 +95,15 @@ public class InvokeTests
         var definition = new InvokeEventDefinition<string, CancelRequest>("cancellable");
         var handlerNotified = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        using var _ = context.RegisterInvokeHandler(definition,
+        using var _ = context.RegisterInvokeHandler(
+            definition,
             async (CancelRequest _, CancellationToken cancellationToken) =>
             {
                 using var registration = cancellationToken.Register(() => handlerNotified.TrySetResult(true));
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                 return "completed";
-            });
+            }
+        );
 
         var client = context.CreateInvokeClient(definition);
         using var cancellationSource = new CancellationTokenSource();
@@ -116,8 +132,9 @@ public class InvokeTests
         using var cancellationSource = new CancellationTokenSource();
         cancellationSource.Cancel();
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            async () => await client.InvokeAsync("request", cancellationSource.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await client.InvokeAsync("request", cancellationSource.Token)
+        );
 
         Assert.Equal(0, sendCount);
         Assert.Equal(1, abortCount);
@@ -138,8 +155,9 @@ public class InvokeTests
         using var _ = context.Subscribe(sendEvent, _ => sendCount++);
 
         var client = context.CreateInvokeClient(definition);
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await client.InvokeAsync("request", CancellationToken.None));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await client.InvokeAsync("request", CancellationToken.None)
+        );
 
         Assert.Same(fatalError, error);
         Assert.Equal(0, sendCount);
@@ -157,22 +175,29 @@ public class InvokeTests
         var receiveEvent = new EventDefinition<ReceivePayload<int>>(definition.ReceiveEventId);
         var handlerStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var responseEmitted = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var responseEmitted = new TaskCompletionSource<ReceivePayload<int>>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
 
-        using var _ = context.Subscribe(receiveEvent, envelope =>
-        {
-            if (envelope.Body.InvokeId == invokeId)
+        using var _ = context.Subscribe(
+            receiveEvent,
+            envelope =>
             {
-                responseEmitted.TrySetResult(envelope.Body);
+                if (envelope.Body.InvokeId == invokeId)
+                {
+                    responseEmitted.TrySetResult(envelope.Body);
+                }
             }
-        });
-        using var __ = context.RegisterInvokeHandler(definition,
+        );
+        using var __ = context.RegisterInvokeHandler(
+            definition,
             async (int _, CancellationToken cancellationToken) =>
             {
                 handlerStarted.TrySetResult(true);
                 await allowCompletion.Task.WaitAsync(TestContext.Current.CancellationToken);
                 return 42;
-            });
+            }
+        );
 
         context.Emit(sendEvent, new SendPayload<int>(invokeId, 1));
         await handlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
@@ -195,12 +220,15 @@ public class InvokeTests
         var abortCount = 0;
 
         using var _ = context.Subscribe(sendAbortEvent, _ => abortCount++);
-        using var __ = context.Subscribe(sendEvent, envelope =>
-        {
-            Task.Run(() => context.Emit(
-                receiveEvent,
-                new ReceivePayload<string>(envelope.Body.InvokeId, "completed")));
-        });
+        using var __ = context.Subscribe(
+            sendEvent,
+            envelope =>
+            {
+                Task.Run(() =>
+                    context.Emit(receiveEvent, new ReceivePayload<string>(envelope.Body.InvokeId, "completed"))
+                );
+            }
+        );
 
         var client = context.CreateInvokeClient(definition);
         using var cancellationSource = new CancellationTokenSource();
@@ -223,14 +251,14 @@ public class InvokeTests
         var context = new EventContext();
         var definition = new InvokeEventDefinition<int, int>("double");
 
-        using var _ = context.RegisterInvokeHandler(definition,
-            (request, _) => Task.FromResult(request * 2));
+        using var _ = context.RegisterInvokeHandler(definition, (request, _) => Task.FromResult(request * 2));
 
         var client = context.CreateInvokeClient(definition);
         var results = await Task.WhenAll(
             client.InvokeAsync(10, CancellationToken.None),
             client.InvokeAsync(20, CancellationToken.None),
-            client.InvokeAsync(50, CancellationToken.None));
+            client.InvokeAsync(50, CancellationToken.None)
+        );
 
         Assert.Equal([20, 40, 100], results);
     }
@@ -265,19 +293,23 @@ public class InvokeTests
         var strongCalls = 0;
         var weakCalls = 0;
 
-        using var _ = context.RegisterInvokeHandler(definition,
+        using var _ = context.RegisterInvokeHandler(
+            definition,
             (request, _) =>
             {
                 strongCalls++;
                 return Task.FromResult(request);
-            });
+            }
+        );
 
-        var weakSubscription = context.RegisterInvokeHandler(definition,
+        var weakSubscription = context.RegisterInvokeHandler(
+            definition,
             (request, _) =>
             {
                 weakCalls++;
                 return Task.FromResult(request);
-            });
+            }
+        );
 
         var client = context.CreateInvokeClient(definition);
 
@@ -299,7 +331,8 @@ public class InvokeTests
         var definition = new InvokeEventDefinition<int, int>("sum-client-stream");
         var received = new List<int>();
 
-        using var _ = context.RegisterInvokeHandler(definition,
+        using var _ = context.RegisterInvokeHandler(
+            definition,
             async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
             {
                 var sum = 0;
@@ -310,7 +343,8 @@ public class InvokeTests
                 }
 
                 return sum;
-            });
+            }
+        );
 
         var client = context.CreateInvokeClient(definition);
         var result = await client.InvokeAsync(Numbers(1, 2, 3), CancellationToken.None);
@@ -326,7 +360,8 @@ public class InvokeTests
         var definition = new InvokeEventDefinition<int, int>("sum-empty-client-stream");
         var received = new List<int>();
 
-        using var _ = context.RegisterInvokeHandler(definition,
+        using var _ = context.RegisterInvokeHandler(
+            definition,
             async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
             {
                 var sum = 0;
@@ -337,7 +372,8 @@ public class InvokeTests
                 }
 
                 return sum;
-            });
+            }
+        );
 
         var client = context.CreateInvokeClient(definition);
         var result = await client.InvokeAsync(Numbers(), CancellationToken.None);
@@ -371,8 +407,9 @@ public class InvokeTests
 
         var client = context.CreateInvokeClient(definition);
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => client.InvokeAsync(Requests(), cancellationSource.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            client.InvokeAsync(Requests(), cancellationSource.Token)
+        );
 
         Assert.Equal(0, requestEnumerationCount);
         Assert.Equal(0, sendCount);
@@ -386,19 +423,20 @@ public class InvokeTests
         var definition = new InvokeEventDefinition<int, int>("sum-client-stream-error");
         var expected = new InvalidOperationException("stream handler failed");
 
-        using var _ = context.RegisterInvokeHandler(definition,
+        using var _ = context.RegisterInvokeHandler(
+            definition,
             async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
             {
-                await foreach (var _ in request.WithCancellation(cancellationToken))
-                {
-                }
+                await foreach (var _ in request.WithCancellation(cancellationToken)) { }
 
                 throw expected;
-            });
+            }
+        );
 
         var client = context.CreateInvokeClient(definition);
-        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => client.InvokeAsync(Numbers(1), CancellationToken.None));
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.InvokeAsync(Numbers(1), CancellationToken.None)
+        );
 
         Assert.Same(expected, actual);
     }
@@ -413,24 +451,33 @@ public class InvokeTests
         var sendStreamEndEvent = new EventDefinition<StreamEndPayload>(definition.SendStreamEndId);
         var receiveEvent = new EventDefinition<ReceivePayload<int>>(definition.ReceiveEventId);
         var receiveErrorEvent = new EventDefinition<ReceiveErrorPayload>(definition.ReceiveErrorId);
-        var response = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var response = new TaskCompletionSource<ReceivePayload<int>>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         var received = new List<int>();
 
-        using var _ = context.Subscribe(receiveEvent, envelope =>
-        {
-            if (envelope.Body.InvokeId == invokeId)
+        using var _ = context.Subscribe(
+            receiveEvent,
+            envelope =>
             {
-                response.TrySetResult(envelope.Body);
+                if (envelope.Body.InvokeId == invokeId)
+                {
+                    response.TrySetResult(envelope.Body);
+                }
             }
-        });
-        using var __ = context.Subscribe(receiveErrorEvent, envelope =>
-        {
-            if (envelope.Body.InvokeId == invokeId)
+        );
+        using var __ = context.Subscribe(
+            receiveErrorEvent,
+            envelope =>
             {
-                response.TrySetException(envelope.Body.Error);
+                if (envelope.Body.InvokeId == invokeId)
+                {
+                    response.TrySetException(envelope.Body.Error);
+                }
             }
-        });
-        using var ___ = context.RegisterInvokeHandler(definition,
+        );
+        using var ___ = context.RegisterInvokeHandler(
+            definition,
             async (request, cancellationToken) =>
             {
                 var sum = 0;
@@ -441,7 +488,8 @@ public class InvokeTests
                 }
 
                 return sum;
-            });
+            }
+        );
 
         context.Emit(sendEvent, new SendPayload<int>(invokeId, 1));
         context.Emit(sendEvent, new SendPayload<int>(invokeId, 2));
@@ -463,24 +511,33 @@ public class InvokeTests
         var sendStreamEndEvent = new EventDefinition<StreamEndPayload>(definition.SendStreamEndId);
         var receiveEvent = new EventDefinition<ReceivePayload<int>>(definition.ReceiveEventId);
         var receiveErrorEvent = new EventDefinition<ReceiveErrorPayload>(definition.ReceiveErrorId);
-        var response = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var response = new TaskCompletionSource<ReceivePayload<int>>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         var received = new List<int>();
 
-        using var _ = context.Subscribe(receiveEvent, envelope =>
-        {
-            if (envelope.Body.InvokeId == invokeId)
+        using var _ = context.Subscribe(
+            receiveEvent,
+            envelope =>
             {
-                response.TrySetResult(envelope.Body);
+                if (envelope.Body.InvokeId == invokeId)
+                {
+                    response.TrySetResult(envelope.Body);
+                }
             }
-        });
-        using var __ = context.Subscribe(receiveErrorEvent, envelope =>
-        {
-            if (envelope.Body.InvokeId == invokeId)
+        );
+        using var __ = context.Subscribe(
+            receiveErrorEvent,
+            envelope =>
             {
-                response.TrySetException(envelope.Body.Error);
+                if (envelope.Body.InvokeId == invokeId)
+                {
+                    response.TrySetException(envelope.Body.Error);
+                }
             }
-        });
-        using var ___ = context.RegisterInvokeHandler(definition,
+        );
+        using var ___ = context.RegisterInvokeHandler(
+            definition,
             async (request, cancellationToken) =>
             {
                 var sum = 0;
@@ -491,7 +548,8 @@ public class InvokeTests
                 }
 
                 return sum;
-            });
+            }
+        );
 
         context.Emit(sendStreamEndEvent, new StreamEndPayload(invokeId));
 
@@ -514,7 +572,8 @@ public class InvokeTests
         var received = new List<int>();
         Exception? handlerError = null;
 
-        using var _ = context.RegisterInvokeHandler(definition,
+        using var _ = context.RegisterInvokeHandler(
+            definition,
             async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
             {
                 using var registration = cancellationToken.Register(() => handlerNotified.TrySetResult(true));
@@ -538,7 +597,8 @@ public class InvokeTests
                 }
 
                 return sum;
-            });
+            }
+        );
 
         context.Emit(sendEvent, new SendPayload<int>(invokeId, 1));
         context.Emit(sendEvent, new SendPayload<int>(invokeId, 2));
@@ -566,7 +626,8 @@ public class InvokeTests
         var received = new List<int>();
         Exception? handlerError = null;
 
-        using var _ = context.RegisterInvokeHandler(definition,
+        using var _ = context.RegisterInvokeHandler(
+            definition,
             async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
             {
                 using var registration = cancellationToken.Register(() => handlerNotified.TrySetResult(true));
@@ -590,7 +651,8 @@ public class InvokeTests
                 }
 
                 return sum;
-            });
+            }
+        );
 
         context.Emit(sendAbortEvent, new AbortPayload(invokeId, "stop"));
 
@@ -613,33 +675,36 @@ public class InvokeTests
         var receiveEvent = new EventDefinition<ReceivePayload<int>>(definition.ReceiveEventId);
         var handlerStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var allowCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var responseEmitted = new TaskCompletionSource<ReceivePayload<int>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var responseEmitted = new TaskCompletionSource<ReceivePayload<int>>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
 
-        using var _ = context.Subscribe(receiveEvent, envelope =>
-        {
-            if (envelope.Body.InvokeId == invokeId)
+        using var _ = context.Subscribe(
+            receiveEvent,
+            envelope =>
             {
-                responseEmitted.TrySetResult(envelope.Body);
+                if (envelope.Body.InvokeId == invokeId)
+                {
+                    responseEmitted.TrySetResult(envelope.Body);
+                }
             }
-        });
-        using var __ = context.RegisterInvokeHandler(definition,
+        );
+        using var __ = context.RegisterInvokeHandler(
+            definition,
             async (IAsyncEnumerable<int> request, CancellationToken cancellationToken) =>
             {
                 handlerStarted.TrySetResult(true);
 
                 try
                 {
-                    await foreach (var _ in request.WithCancellation(cancellationToken))
-                    {
-                    }
+                    await foreach (var _ in request.WithCancellation(cancellationToken)) { }
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
 
                 await allowCompletion.Task.WaitAsync(TestContext.Current.CancellationToken);
                 return 42;
-            });
+            }
+        );
 
         context.Emit(sendEvent, new SendPayload<int>(invokeId, 1));
         await handlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
@@ -683,7 +748,8 @@ public class InvokeTests
         public void Emit<TPayload, TOptions>(
             EventDefinition<TPayload> eventDefinition,
             TPayload payload,
-            TOptions options)
+            TOptions options
+        )
             where TOptions : class
         {
             _inner.Emit(eventDefinition, payload, options);
@@ -691,7 +757,8 @@ public class InvokeTests
 
         public IDisposable Subscribe<TPayload>(
             EventDefinition<TPayload> eventDefinition,
-            Action<EventEnvelope<TPayload>> handler)
+            Action<EventEnvelope<TPayload>> handler
+        )
         {
             var subscription = _inner.Subscribe(eventDefinition, handler);
 
@@ -711,35 +778,40 @@ public class InvokeTests
 
         public IDisposable SubscribeOnce<TPayload>(
             EventDefinition<TPayload> eventDefinition,
-            Action<EventEnvelope<TPayload>> handler)
+            Action<EventEnvelope<TPayload>> handler
+        )
         {
             return _inner.SubscribeOnce(eventDefinition, handler);
         }
 
         public void Unsubscribe<TPayload>(
             EventDefinition<TPayload> eventDefinition,
-            Action<EventEnvelope<TPayload>>? handler = null)
+            Action<EventEnvelope<TPayload>>? handler = null
+        )
         {
             _inner.Unsubscribe(eventDefinition, handler);
         }
 
         public IDisposable Subscribe<TPayload>(
             MatchExpression<TPayload> matchExpression,
-            Action<EventEnvelope<TPayload>> handler)
+            Action<EventEnvelope<TPayload>> handler
+        )
         {
             return _inner.Subscribe(matchExpression, handler);
         }
 
         public IDisposable SubscribeOnce<TPayload>(
             MatchExpression<TPayload> matchExpression,
-            Action<EventEnvelope<TPayload>> handler)
+            Action<EventEnvelope<TPayload>> handler
+        )
         {
             return _inner.SubscribeOnce(matchExpression, handler);
         }
 
         public void Unsubscribe<TPayload>(
             MatchExpression<TPayload> matchExpression,
-            Action<EventEnvelope<TPayload>>? handler = null)
+            Action<EventEnvelope<TPayload>>? handler = null
+        )
         {
             _inner.Unsubscribe(matchExpression, handler);
         }
@@ -754,10 +826,12 @@ public class InvokeTests
     {
         private readonly Lock _sync = new();
         private readonly Dictionary<string, HashSet<Delegate>> _listeners = new(StringComparer.Ordinal);
-        private readonly TaskCompletionSource<bool> _blockedDisposeStarted =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private readonly TaskCompletionSource<bool> _releaseBlockedDispose =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _blockedDisposeStarted = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        private readonly TaskCompletionSource<bool> _releaseBlockedDispose = new(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
 
         public IDictionary<string, object> Extensions { get; } = new Dictionary<string, object>();
 
@@ -787,10 +861,7 @@ public class InvokeTests
             }
         }
 
-        public void Emit<TPayload, TOptions>(
-            EventDefinition<TPayload> eventDefinition,
-            TPayload payload,
-            TOptions _)
+        public void Emit<TPayload, TOptions>(EventDefinition<TPayload> eventDefinition, TPayload payload, TOptions _)
             where TOptions : class
         {
             Emit(eventDefinition, payload);
@@ -798,7 +869,8 @@ public class InvokeTests
 
         public IDisposable Subscribe<TPayload>(
             EventDefinition<TPayload> eventDefinition,
-            Action<EventEnvelope<TPayload>> handler)
+            Action<EventEnvelope<TPayload>> handler
+        )
         {
             ArgumentNullException.ThrowIfNull(eventDefinition);
             ArgumentNullException.ThrowIfNull(handler);
@@ -838,35 +910,40 @@ public class InvokeTests
 
         public IDisposable SubscribeOnce<TPayload>(
             EventDefinition<TPayload> eventDefinition,
-            Action<EventEnvelope<TPayload>> handler)
+            Action<EventEnvelope<TPayload>> handler
+        )
         {
             throw new NotSupportedException();
         }
 
         public void Unsubscribe<TPayload>(
             EventDefinition<TPayload> eventDefinition,
-            Action<EventEnvelope<TPayload>>? handler = null)
+            Action<EventEnvelope<TPayload>>? handler = null
+        )
         {
             throw new NotSupportedException();
         }
 
         public IDisposable Subscribe<TPayload>(
             MatchExpression<TPayload> matchExpression,
-            Action<EventEnvelope<TPayload>> handler)
+            Action<EventEnvelope<TPayload>> handler
+        )
         {
             throw new NotSupportedException();
         }
 
         public IDisposable SubscribeOnce<TPayload>(
             MatchExpression<TPayload> matchExpression,
-            Action<EventEnvelope<TPayload>> handler)
+            Action<EventEnvelope<TPayload>> handler
+        )
         {
             throw new NotSupportedException();
         }
 
         public void Unsubscribe<TPayload>(
             MatchExpression<TPayload> matchExpression,
-            Action<EventEnvelope<TPayload>>? handler = null)
+            Action<EventEnvelope<TPayload>>? handler = null
+        )
         {
             throw new NotSupportedException();
         }

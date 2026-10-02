@@ -1,10 +1,8 @@
 using System.Runtime.CompilerServices;
-
 using Eventa;
 using EventaExample.Consumers;
 using EventaExample.Contracts;
 using EventaExample.Producers;
-
 using Microsoft.Extensions.DependencyInjection;
 
 namespace EventaExample;
@@ -38,7 +36,8 @@ internal static class Program
 
         using var subscription = context.Subscribe(
             moved,
-            envelope => WriteLine("received move", $"{envelope.Body.X},{envelope.Body.Y}"));
+            envelope => WriteLine("received move", $"{envelope.Body.X},{envelope.Body.Y}")
+        );
 
         context.Emit(moved, new MovePayload(10, 20));
     }
@@ -70,7 +69,8 @@ internal static class Program
         services.AddSingleton<InventoryService>();
 
         using var provider = services.BuildServiceProvider(
-            new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+            new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true }
+        );
         var projection = provider.GetRequiredService<InventoryProjection>();
         using var subscription = projection.Start();
         var inventory = provider.GetRequiredService<InventoryService>();
@@ -91,7 +91,8 @@ internal static class Program
         using var handler = context.RegisterInvokeHandler(
             echo,
             static (EchoRequest request, CancellationToken _) =>
-                Task.FromResult(new EchoResponse(request.Input.ToUpperInvariant())));
+                Task.FromResult(new EchoResponse(request.Input.ToUpperInvariant()))
+        );
 
         var client = context.CreateInvokeClient(echo);
         var result = await client.InvokeAsync(new EchoRequest("eventa"));
@@ -108,12 +109,11 @@ internal static class Program
 
         using var handler = context.RegisterStreamHandler(
             sync,
-            static (SyncRequest request, CancellationToken cancellationToken) =>
-                SyncJob(request, cancellationToken));
+            static (SyncRequest request, CancellationToken cancellationToken) => SyncJob(request, cancellationToken)
+        );
 
         var client = context.CreateInvokeStreamClient(sync);
-        var updates = await CollectAsync(
-            client.InvokeAsync(new SyncRequest("import", 3)));
+        var updates = await CollectAsync(client.InvokeAsync(new SyncRequest("import", 3)));
 
         WriteLines("sync updates", updates.Select(Describe));
     }
@@ -150,12 +150,12 @@ internal static class Program
                 }
 
                 return new RouteSummary(count, distance);
-            });
+            }
+        );
 
         var client = context.CreateInvokeClient(recordRoute);
 
-        return await client.InvokeAsync(
-            RoutePoints(new RoutePoint(1, 2), new RoutePoint(3, 4), new RoutePoint(-2, 5)));
+        return await client.InvokeAsync(RoutePoints(new RoutePoint(1, 2), new RoutePoint(3, 4), new RoutePoint(-2, 5)));
     }
 
     private static async Task<List<RouteNote>> RouteChat()
@@ -166,12 +166,12 @@ internal static class Program
         using var handler = context.RegisterStreamHandler(
             chat,
             static (IAsyncEnumerable<RouteNote> request, CancellationToken cancellationToken) =>
-                EchoNotes(request, cancellationToken));
+                EchoNotes(request, cancellationToken)
+        );
 
         var client = context.CreateInvokeStreamClient(chat);
 
-        return await CollectAsync(
-            client.InvokeAsync(RouteNotes(new RouteNote("hello"), new RouteNote("from stream"))));
+        return await CollectAsync(client.InvokeAsync(RouteNotes(new RouteNote("hello"), new RouteNote("from stream"))));
     }
 
     private static async Task<List<SyncUpdate>> CallbackStyleStream()
@@ -181,23 +181,25 @@ internal static class Program
 
         using var handler = context.RegisterStreamHandler(
             sync,
-            EventStream.ToStreamHandler<SyncUpdate, SyncRequest>(static async (request, emit, cancellationToken) =>
-            {
-                await emit(new SyncProgress(0));
-
-                for (var step = 1; step <= request.Steps; step++)
+            EventStream.ToStreamHandler<SyncUpdate, SyncRequest>(
+                static async (request, emit, cancellationToken) =>
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    await emit(new SyncProgress(step * 100 / request.Steps));
-                }
+                    await emit(new SyncProgress(0));
 
-                await emit(new SyncCompleted(request.JobId));
-            }));
+                    for (var step = 1; step <= request.Steps; step++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        await emit(new SyncProgress(step * 100 / request.Steps));
+                    }
+
+                    await emit(new SyncCompleted(request.JobId));
+                }
+            )
+        );
 
         var client = context.CreateInvokeStreamClient(sync);
 
-        return await CollectAsync(
-            client.InvokeAsync(new SyncRequest("callback-import", 2)));
+        return await CollectAsync(client.InvokeAsync(new SyncRequest("callback-import", 2)));
     }
 
     private static void RunContextUtilities()
@@ -209,16 +211,10 @@ internal static class Program
         var generatedLog = new EventDefinition<LogEntry>();
         var calls = new List<string>();
 
-        using var always = context.Subscribe(
-            stableLog,
-            envelope => calls.Add($"always:{envelope.Body.Message}"));
-        using var once = context.SubscribeOnce(
-            stableLog,
-            envelope => calls.Add($"once:{envelope.Body.Message}"));
+        using var always = context.Subscribe(stableLog, envelope => calls.Add($"always:{envelope.Body.Message}"));
+        using var once = context.SubscribeOnce(stableLog, envelope => calls.Add($"once:{envelope.Body.Message}"));
 
-        var temporary = context.Subscribe(
-            stableLog,
-            envelope => calls.Add($"temporary:{envelope.Body.Message}"));
+        var temporary = context.Subscribe(stableLog, envelope => calls.Add($"temporary:{envelope.Body.Message}"));
 
         context.Emit(stableLog, new LogEntry("auth", "info", "boot"));
         temporary.Dispose();
@@ -226,15 +222,18 @@ internal static class Program
 
         var isError = MatchExpression<LogEntry>.Create(
             envelope => envelope.Body.Level == "error",
-            "example:match:error");
+            "example:match:error"
+        );
         var fromAuth = MatchExpression<LogEntry>.Create(
             envelope => envelope.Body.Source == "auth",
-            "example:match:auth");
+            "example:match:auth"
+        );
         var matched = new List<string>();
 
         using var matchedSubscription = context.Subscribe(
             isError.And(fromAuth),
-            envelope => matched.Add(envelope.Body.Message));
+            envelope => matched.Add(envelope.Body.Message)
+        );
 
         context.Emit(stableLog, new LogEntry("auth", "error", "token expired"));
         context.Unsubscribe(stableLog);
@@ -269,7 +268,8 @@ internal static class Program
         var log = new EventDefinition<LogEntry>("example:adapter:log");
         var errorLogs = MatchExpression<LogEntry>.Create(
             envelope => envelope.Body.Level == "error",
-            "example:adapter:errors");
+            "example:adapter:errors"
+        );
 
         using var direct = context.Subscribe(log, _ => { });
         using var matched = context.Subscribe(errorLogs, _ => { });
@@ -277,7 +277,8 @@ internal static class Program
         context.Emit(
             log,
             new LogEntry("worker", "error", "connection lost"),
-            new EmitMetadata("console-example", "corr-1"));
+            new EmitMetadata("console-example", "corr-1")
+        );
 
         var sent = adapter.SentCalls.Single();
         var options = (EmitMetadata?)sent.Options;
@@ -299,7 +300,8 @@ internal static class Program
                 using var registration = cancellationToken.Register(() => handlerCanceled.TrySetResult(true));
                 await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
                 return "not reached";
-            });
+            }
+        );
 
         var client = context.CreateInvokeClient(slow);
         using var cancellationSource = new CancellationTokenSource();
@@ -321,8 +323,8 @@ internal static class Program
 
         using var handler = context.RegisterStreamHandler(
             slow,
-            (int request, CancellationToken cancellationToken) =>
-                SlowCount(request, handlerCanceled, cancellationToken));
+            (int request, CancellationToken cancellationToken) => SlowCount(request, handlerCanceled, cancellationToken)
+        );
 
         var client = context.CreateInvokeStreamClient(slow);
         using var cancellationSource = new CancellationTokenSource();
@@ -347,17 +349,14 @@ internal static class Program
         var fatal = new EventDefinition<FatalPayload>("example:fatal:event");
         var pendingWork = new InvokeEventDefinition<string, string>("example:rpc:fatal-event");
 
-        context.RegisterAbortEvent(
-            fatal,
-            payload => new InvalidOperationException($"fatal event: {payload.Reason}"));
+        context.RegisterAbortEvent(fatal, payload => new InvalidOperationException($"fatal event: {payload.Reason}"));
 
         var client = context.CreateInvokeClient(pendingWork);
         var pending = client.InvokeAsync("request");
 
         context.Emit(fatal, new FatalPayload("adapter closed"));
 
-        return await CaptureErrorMessage(
-            () => pending.WaitAsync(TimeSpan.FromSeconds(2)));
+        return await CaptureErrorMessage(() => pending.WaitAsync(TimeSpan.FromSeconds(2)));
     }
 
     private static async Task<string> AbortWithFatalMatch()
@@ -366,20 +365,21 @@ internal static class Program
         var fatalTransport = new EventDefinition<FatalPayload>("example:fatal:transport");
         var anyFatalEvent = MatchExpression<FatalPayload>.Create(
             envelope => envelope.EventId.StartsWith("example:fatal:", StringComparison.Ordinal),
-            "example:fatal:any");
+            "example:fatal:any"
+        );
         var pendingWork = new InvokeEventDefinition<string, string>("example:rpc:fatal-match");
 
         context.RegisterAbortEvent(
             anyFatalEvent,
-            payload => new InvalidOperationException($"fatal match: {payload.Reason}"));
+            payload => new InvalidOperationException($"fatal match: {payload.Reason}")
+        );
 
         var client = context.CreateInvokeClient(pendingWork);
         var pending = client.InvokeAsync("request");
 
         context.Emit(fatalTransport, new FatalPayload("worker crashed"));
 
-        return await CaptureErrorMessage(
-            () => pending.WaitAsync(TimeSpan.FromSeconds(2)));
+        return await CaptureErrorMessage(() => pending.WaitAsync(TimeSpan.FromSeconds(2)));
     }
 
     private static async IAsyncEnumerable<RoutePoint> RoutePoints(params RoutePoint[] points)
@@ -402,7 +402,8 @@ internal static class Program
 
     private static async IAsyncEnumerable<SyncUpdate> SyncJob(
         SyncRequest request,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken
+    )
     {
         for (var step = 1; step <= request.Steps; step++)
         {
@@ -416,7 +417,8 @@ internal static class Program
 
     private static async IAsyncEnumerable<RouteNote> EchoNotes(
         IAsyncEnumerable<RouteNote> request,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken
+    )
     {
         await foreach (var note in request.WithCancellation(cancellationToken))
         {
@@ -427,7 +429,8 @@ internal static class Program
     private static async IAsyncEnumerable<int> SlowCount(
         int request,
         TaskCompletionSource<bool> handlerCanceled,
-        [EnumeratorCancellation] CancellationToken cancellationToken)
+        [EnumeratorCancellation] CancellationToken cancellationToken
+    )
     {
         using var registration = cancellationToken.Register(() => handlerCanceled.TrySetResult(true));
 

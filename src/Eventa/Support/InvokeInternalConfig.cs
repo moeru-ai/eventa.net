@@ -10,9 +10,7 @@ internal static class EventContextFeatures
     /// <summary>
     /// Resolves a typed context feature by key, creating or replacing the stored value when needed.
     /// </summary>
-    public static TFeature GetOrCreateFeature<TFeature>(
-        this IEventContext context,
-        string key)
+    public static TFeature GetOrCreateFeature<TFeature>(this IEventContext context, string key)
         where TFeature : class, new()
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -20,8 +18,7 @@ internal static class EventContextFeatures
 
         lock (context.Extensions)
         {
-            if (context.Extensions.TryGetValue(key, out var rawFeature)
-                && rawFeature is TFeature feature)
+            if (context.Extensions.TryGetValue(key, out var rawFeature) && rawFeature is TFeature feature)
             {
                 return feature;
             }
@@ -38,7 +35,8 @@ internal static class EventContextFeatures
     public static bool TryGetFeature<TFeature>(
         this IEventContext context,
         string key,
-        [NotNullWhen(true)] out TFeature? feature)
+        [NotNullWhen(true)] out TFeature? feature
+    )
         where TFeature : class
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -46,8 +44,7 @@ internal static class EventContextFeatures
 
         lock (context.Extensions)
         {
-            if (context.Extensions.TryGetValue(key, out var rawFeature)
-                && rawFeature is TFeature typedFeature)
+            if (context.Extensions.TryGetValue(key, out var rawFeature) && rawFeature is TFeature typedFeature)
             {
                 feature = typedFeature;
                 return true;
@@ -95,7 +92,8 @@ internal sealed class InvokeInternalConfig
 internal sealed class AbortEventRegistration(
     string id,
     AbortEventRegistrationKind kind,
-    Func<IEventContext, Action<Exception?>, IDisposable> subscribe)
+    Func<IEventContext, Action<Exception?>, IDisposable> subscribe
+)
 {
     /// <summary>
     /// Gets the source kind represented by this registration.

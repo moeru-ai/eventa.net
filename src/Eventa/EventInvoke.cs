@@ -26,7 +26,8 @@ public static class EventInvoke
     /// <returns>A reusable client that can issue invokes against the contract.</returns>
     public static InvokeClient<TResponse, TRequest> CreateInvokeClient<TResponse, TRequest>(
         this IEventContext context,
-        InvokeEventDefinition<TResponse, TRequest> eventDefinition)
+        InvokeEventDefinition<TResponse, TRequest> eventDefinition
+    )
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(eventDefinition);
@@ -44,7 +45,8 @@ public static class EventInvoke
     /// <returns>A reusable client that can issue invokes against the contract.</returns>
     public static InvokeClient<TResponse, TRequest> CreateInvokeClient<TResponse, TRequest>(
         Func<IEventContext> contextFactory,
-        InvokeEventDefinition<TResponse, TRequest> eventDefinition)
+        InvokeEventDefinition<TResponse, TRequest> eventDefinition
+    )
     {
         ArgumentNullException.ThrowIfNull(contextFactory);
         ArgumentNullException.ThrowIfNull(eventDefinition);
@@ -72,7 +74,8 @@ public static class EventInvoke
     public static IDisposable RegisterInvokeHandler<TResponse, TRequest>(
         this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
-        Func<TRequest, CancellationToken, Task<TResponse>> handler)
+        Func<TRequest, CancellationToken, Task<TResponse>> handler
+    )
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(eventDefinition);
@@ -83,7 +86,8 @@ public static class EventInvoke
             .Register(
                 eventDefinition.SendEventId,
                 handler,
-                () => InvokeHandlerRegistrationFactory.CreateUnary(context, eventDefinition, handler));
+                () => InvokeHandlerRegistrationFactory.CreateUnary(context, eventDefinition, handler)
+            );
     }
 
     /// <summary>
@@ -102,7 +106,8 @@ public static class EventInvoke
     public static IDisposable RegisterInvokeHandler<TResponse, TRequest>(
         this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
-        Func<IAsyncEnumerable<TRequest>, CancellationToken, Task<TResponse>> handler)
+        Func<IAsyncEnumerable<TRequest>, CancellationToken, Task<TResponse>> handler
+    )
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(eventDefinition);
@@ -113,7 +118,8 @@ public static class EventInvoke
             .Register(
                 eventDefinition.SendEventId,
                 handler,
-                () => InvokeHandlerRegistrationFactory.CreateRequestStream(context, eventDefinition, handler));
+                () => InvokeHandlerRegistrationFactory.CreateRequestStream(context, eventDefinition, handler)
+            );
     }
 
     #endregion

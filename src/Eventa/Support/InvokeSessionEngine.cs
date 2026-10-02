@@ -29,14 +29,15 @@ internal abstract class InvokeSessionEngine<TResponse, TRequest>(
     InvokeEventBindings<TResponse, TRequest> events,
     SendDispatchMode sendDispatchMode,
     Func<string, CancellationToken, Task> sendRequest,
-    CancellationToken cancellationToken)
+    CancellationToken cancellationToken
+)
 {
     private readonly Func<string, CancellationToken, Task> _sendRequest = sendRequest;
     private readonly SendDispatchMode _sendDispatchMode = sendDispatchMode;
     private readonly CancellationToken _cancellationToken = cancellationToken;
     private readonly CancellationTokenSource _requestCancellationSource = cancellationToken.CanBeCanceled
-            ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
-            : new CancellationTokenSource();
+        ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
+        : new CancellationTokenSource();
     private readonly List<IDisposable> _subscriptions = [];
     private readonly string _invokeId = IdGenerator.New();
     private int _finished;
@@ -211,11 +212,14 @@ internal abstract class InvokeSessionEngine<TResponse, TRequest>(
     /// <summary>
     /// Resolves the invoke extension state for fatal-event subscriptions when it is available.
     /// </summary>
-    private static bool TryGetInvokeInternalConfig(
-        IEventContext context,
-        out InvokeInternalConfig config)
+    private static bool TryGetInvokeInternalConfig(IEventContext context, out InvokeInternalConfig config)
     {
-        if (context.TryGetFeature<InvokeInternalConfig>(InvokeExtensions.InternalInvokeConfigKey, out var internalConfig))
+        if (
+            context.TryGetFeature<InvokeInternalConfig>(
+                InvokeExtensions.InternalInvokeConfigKey,
+                out var internalConfig
+            )
+        )
         {
             config = internalConfig;
             return true;
@@ -242,10 +246,12 @@ internal sealed class UnaryInvokeSessionEngine<TResponse, TRequest>(
     InvokeEventBindings<TResponse, TRequest> events,
     SendDispatchMode sendDispatchMode,
     Func<string, CancellationToken, Task> sendRequest,
-    CancellationToken cancellationToken) : InvokeSessionEngine<TResponse, TRequest>(context, events, sendDispatchMode, sendRequest, cancellationToken)
+    CancellationToken cancellationToken
+) : InvokeSessionEngine<TResponse, TRequest>(context, events, sendDispatchMode, sendRequest, cancellationToken)
 {
-    private readonly TaskCompletionSource<TResponse> _completion =
-        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<TResponse> _completion = new(
+        TaskCreationOptions.RunContinuationsAsynchronously
+    );
 
     /// <summary>
     /// Starts the invoke session and completes when a response, error, cancellation, or fatal event arrives.
@@ -297,7 +303,8 @@ internal sealed class StreamInvokeSessionEngine<TResponse, TRequest>(
     InvokeEventBindings<TResponse, TRequest> events,
     SendDispatchMode sendDispatchMode,
     Func<string, CancellationToken, Task> sendRequest,
-    CancellationToken cancellationToken) : InvokeSessionEngine<TResponse, TRequest>(context, events, sendDispatchMode, sendRequest, cancellationToken)
+    CancellationToken cancellationToken
+) : InvokeSessionEngine<TResponse, TRequest>(context, events, sendDispatchMode, sendRequest, cancellationToken)
 {
     private readonly AsyncSignalQueue<TResponse> _responses = new();
 

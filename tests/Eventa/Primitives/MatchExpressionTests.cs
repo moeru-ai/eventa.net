@@ -5,8 +5,9 @@ public class MatchExpressionTests
     [Fact]
     public void Create_GeneratesAnIdWhenOmitted()
     {
-        var expression = MatchExpression<TestPayload>.Create(
-            envelope => envelope.Body.Value.StartsWith("match", StringComparison.Ordinal));
+        var expression = MatchExpression<TestPayload>.Create(envelope =>
+            envelope.Body.Value.StartsWith("match", StringComparison.Ordinal)
+        );
 
         Assert.NotEmpty(expression.Id);
         Assert.True(expression.Matcher(new EventEnvelope<TestPayload>("test-event", new TestPayload("match-value"))));
@@ -17,7 +18,8 @@ public class MatchExpressionTests
     {
         var expression = MatchExpression<TestPayload>.Create(
             envelope => envelope.Body.Value.Length > 0,
-            "custom-match");
+            "custom-match"
+        );
 
         Assert.Equal("custom-match", expression.Id);
     }
@@ -27,10 +29,9 @@ public class MatchExpressionTests
     {
         var startsWithA = new MatchExpression<TestPayload>(
             "starts-with-a",
-            envelope => envelope.Body.Value.StartsWith('a'));
-        var endsWithZ = new MatchExpression<TestPayload>(
-            "ends-with-z",
-            envelope => envelope.Body.Value.EndsWith('z'));
+            envelope => envelope.Body.Value.StartsWith('a')
+        );
+        var endsWithZ = new MatchExpression<TestPayload>("ends-with-z", envelope => envelope.Body.Value.EndsWith('z'));
 
         var combined = startsWithA.And(endsWithZ);
 
@@ -44,10 +45,9 @@ public class MatchExpressionTests
     {
         var startsWithA = new MatchExpression<TestPayload>(
             "starts-with-a",
-            envelope => envelope.Body.Value.StartsWith('a'));
-        var endsWithZ = new MatchExpression<TestPayload>(
-            "ends-with-z",
-            envelope => envelope.Body.Value.EndsWith('z'));
+            envelope => envelope.Body.Value.StartsWith('a')
+        );
+        var endsWithZ = new MatchExpression<TestPayload>("ends-with-z", envelope => envelope.Body.Value.EndsWith('z'));
 
         var combined = startsWithA.Or(endsWithZ);
 

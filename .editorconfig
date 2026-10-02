@@ -151,6 +151,9 @@ csharp_using_directive_placement = outside_namespace:silent
 
 #### C# Formatting Rules ####
 
+# Maximum recommended line length
+max_line_length = 120
+
 # New line preferences
 csharp_new_line_before_catch = true
 csharp_new_line_before_else = true
@@ -386,4 +389,3 @@ dotnet_naming_style.s_camelcase.required_prefix = s_
 dotnet_naming_style.s_camelcase.required_suffix = 
 dotnet_naming_style.s_camelcase.word_separator = 
 dotnet_naming_style.s_camelcase.capitalization = camel_case
-

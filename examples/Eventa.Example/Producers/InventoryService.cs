@@ -12,8 +12,6 @@ public sealed class InventoryService(IEventContext context)
         var quantityOnHand = _stock.GetValueOrDefault(sku) + delta;
 
         _stock[sku] = quantityOnHand;
-        context.Emit(
-            InventoryEvents.StockAdjusted,
-            new StockAdjusted(sku, delta, quantityOnHand));
+        context.Emit(InventoryEvents.StockAdjusted, new StockAdjusted(sku, delta, quantityOnHand));
     }
 }
