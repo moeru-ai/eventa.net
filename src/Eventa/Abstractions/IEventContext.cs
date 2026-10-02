@@ -41,10 +41,7 @@ public interface IEventContext : IDisposable
     /// <param name="eventDefinition">The event definition that identifies the channel to emit on.</param>
     /// <param name="payload">The payload value to wrap in the emitted envelope.</param>
     /// <param name="options">Optional adapter metadata associated with this emit operation.</param>
-    void Emit<TPayload, TOptions>(
-        EventDefinition<TPayload> eventDefinition,
-        TPayload payload,
-        TOptions options)
+    void Emit<TPayload, TOptions>(EventDefinition<TPayload> eventDefinition, TPayload payload, TOptions options)
         where TOptions : class;
 
     /// <summary>
@@ -56,9 +53,7 @@ public interface IEventContext : IDisposable
     /// <returns>
     /// An <see cref="IDisposable"/> that removes this listener from the context when disposed.
     /// </returns>
-    IDisposable Subscribe<TPayload>(
-        EventDefinition<TPayload> eventDefinition,
-        Action<EventEnvelope<TPayload>> handler);
+    IDisposable Subscribe<TPayload>(EventDefinition<TPayload> eventDefinition, Action<EventEnvelope<TPayload>> handler);
 
     /// <summary>
     /// Registers a listener that runs at most once for the specified event.
@@ -71,7 +66,8 @@ public interface IEventContext : IDisposable
     /// </returns>
     IDisposable SubscribeOnce<TPayload>(
         EventDefinition<TPayload> eventDefinition,
-        Action<EventEnvelope<TPayload>> handler);
+        Action<EventEnvelope<TPayload>> handler
+    );
 
     /// <summary>
     /// Removes one listener or all listeners associated with the specified event.
@@ -84,7 +80,8 @@ public interface IEventContext : IDisposable
     /// </param>
     void Unsubscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
-        Action<EventEnvelope<TPayload>>? handler = null);
+        Action<EventEnvelope<TPayload>>? handler = null
+    );
 
     /// <summary>
     /// Registers a listener for all emitted events whose envelopes satisfy a match expression.
@@ -95,9 +92,7 @@ public interface IEventContext : IDisposable
     /// <returns>
     /// An <see cref="IDisposable"/> that removes this match listener when disposed.
     /// </returns>
-    IDisposable Subscribe<TPayload>(
-        MatchExpression<TPayload> matchExpression,
-        Action<EventEnvelope<TPayload>> handler);
+    IDisposable Subscribe<TPayload>(MatchExpression<TPayload> matchExpression, Action<EventEnvelope<TPayload>> handler);
 
     /// <summary>
     /// Registers a listener that runs at most once for emitted events matching the expression.
@@ -110,7 +105,8 @@ public interface IEventContext : IDisposable
     /// </returns>
     IDisposable SubscribeOnce<TPayload>(
         MatchExpression<TPayload> matchExpression,
-        Action<EventEnvelope<TPayload>> handler);
+        Action<EventEnvelope<TPayload>> handler
+    );
 
     /// <summary>
     /// Removes one listener or all listeners associated with the specified match expression.
@@ -123,5 +119,6 @@ public interface IEventContext : IDisposable
     /// </param>
     void Unsubscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
-        Action<EventEnvelope<TPayload>>? handler = null);
+        Action<EventEnvelope<TPayload>>? handler = null
+    );
 }

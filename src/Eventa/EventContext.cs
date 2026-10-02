@@ -14,10 +14,10 @@ namespace Eventa;
 /// received envelopes without taking over the in-process dispatch path.
 /// </para>
 /// </remarks>
-public sealed class EventContext(IEventaAdapter? adapter = null) :
-    IEventContext,
-    IEventInboundDispatcher,
-    IEventTransportFatalNotifier
+public sealed class EventContext(IEventaAdapter? adapter = null)
+    : IEventContext,
+        IEventInboundDispatcher,
+        IEventTransportFatalNotifier
 {
     private readonly EventListenerStore _listeners = new();
 
@@ -74,19 +74,13 @@ public sealed class EventContext(IEventaAdapter? adapter = null) :
     /// Thrown when this context has already associated <paramref name="eventDefinition"/> with a
     /// different payload type.
     /// </exception>
-    public void Emit<TPayload, TOptions>(
-        EventDefinition<TPayload> eventDefinition,
-        TPayload payload,
-        TOptions options)
+    public void Emit<TPayload, TOptions>(EventDefinition<TPayload> eventDefinition, TPayload payload, TOptions options)
         where TOptions : class
     {
         EmitCore(eventDefinition, payload, options);
     }
 
-    private void EmitCore<TPayload>(
-        EventDefinition<TPayload> eventDefinition,
-        TPayload payload,
-        object? options)
+    private void EmitCore<TPayload>(EventDefinition<TPayload> eventDefinition, TPayload payload, object? options)
     {
         var dispatch = _listeners.CreateDispatchSnapshot(eventDefinition, payload, nameof(Emit));
 
@@ -180,7 +174,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) :
     /// </exception>
     public IDisposable Subscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
-        Action<EventEnvelope<TPayload>> handler)
+        Action<EventEnvelope<TPayload>> handler
+    )
     {
         return _listeners.Subscribe(eventDefinition, handler, EventListenerLifetime.Regular, nameof(Subscribe));
     }
@@ -204,7 +199,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) :
     /// </exception>
     public IDisposable SubscribeOnce<TPayload>(
         EventDefinition<TPayload> eventDefinition,
-        Action<EventEnvelope<TPayload>> handler)
+        Action<EventEnvelope<TPayload>> handler
+    )
     {
         return _listeners.Subscribe(eventDefinition, handler, EventListenerLifetime.Once, nameof(SubscribeOnce));
     }
@@ -224,7 +220,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) :
     /// </exception>
     public void Unsubscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
-        Action<EventEnvelope<TPayload>>? handler = null)
+        Action<EventEnvelope<TPayload>>? handler = null
+    )
     {
         _listeners.Unsubscribe(eventDefinition, handler, nameof(Unsubscribe));
     }
@@ -244,7 +241,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) :
     /// </exception>
     public IDisposable Subscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
-        Action<EventEnvelope<TPayload>> handler)
+        Action<EventEnvelope<TPayload>> handler
+    )
     {
         return _listeners.Subscribe(matchExpression, handler, EventListenerLifetime.Regular, nameof(Subscribe));
     }
@@ -268,7 +266,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) :
     /// </exception>
     public IDisposable SubscribeOnce<TPayload>(
         MatchExpression<TPayload> matchExpression,
-        Action<EventEnvelope<TPayload>> handler)
+        Action<EventEnvelope<TPayload>> handler
+    )
     {
         return _listeners.Subscribe(matchExpression, handler, EventListenerLifetime.Once, nameof(SubscribeOnce));
     }
@@ -288,7 +287,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null) :
     /// </exception>
     public void Unsubscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
-        Action<EventEnvelope<TPayload>>? handler = null)
+        Action<EventEnvelope<TPayload>>? handler = null
+    )
     {
         _listeners.Unsubscribe(matchExpression, handler, nameof(Unsubscribe));
     }

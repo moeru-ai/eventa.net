@@ -7,8 +7,7 @@ namespace Eventa;
 internal sealed class InvocationCancellationTracker
 {
     private readonly Lock _sync = new();
-    private readonly Dictionary<string, CancellationTokenSource> _inflight =
-        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, CancellationTokenSource> _inflight = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Starts tracking a new invoke and returns the <see cref="CancellationTokenSource" /> that
@@ -133,8 +132,7 @@ internal sealed class RequestStreamInvocationState<TRequest>(string invokeId) : 
 internal sealed class RequestStreamInvocationTracker<TRequest>
 {
     private readonly Lock _sync = new();
-    private readonly Dictionary<string, RequestStreamInvocationState<TRequest>> _inflight =
-        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, RequestStreamInvocationState<TRequest>> _inflight = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Gets the existing state for <paramref name="invokeId" /> or creates it, publishes it
@@ -146,7 +144,8 @@ internal sealed class RequestStreamInvocationTracker<TRequest>
     /// <param name="startExecution">The callback that starts handler execution for a newly created state.</param>
     public RequestStreamInvocationState<TRequest> GetOrCreate(
         string invokeId,
-        Func<RequestStreamInvocationState<TRequest>, Task> startExecution)
+        Func<RequestStreamInvocationState<TRequest>, Task> startExecution
+    )
     {
         ArgumentNullException.ThrowIfNull(startExecution);
 

@@ -12,7 +12,8 @@ public class IdiomaticApiTests
 
         using var _ = context.RegisterInvokeHandler(
             definition,
-            (string request, CancellationToken _) => Task.FromResult($"handled:{request}"));
+            (string request, CancellationToken _) => Task.FromResult($"handled:{request}")
+        );
 
         var client = context.CreateInvokeClient(definition);
         var result = await client.InvokeAsync("request", CancellationToken.None);
@@ -55,9 +56,7 @@ public class IdiomaticApiTests
 
         Assert.Equal([1, 2, 3], results);
 
-        static async IAsyncEnumerable<int> CountAsync(
-            int request,
-            [EnumeratorCancellation] CancellationToken _)
+        static async IAsyncEnumerable<int> CountAsync(int request, [EnumeratorCancellation] CancellationToken _)
         {
             for (var value = 1; value <= request; value++)
             {

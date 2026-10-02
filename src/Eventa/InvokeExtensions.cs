@@ -34,7 +34,8 @@ public static class InvokeExtensions
     public static void RegisterAbortEvent<TPayload>(
         this IEventContext context,
         EventDefinition<TPayload> fatalEvent,
-        Func<TPayload, Exception?>? mapError = null)
+        Func<TPayload, Exception?>? mapError = null
+    )
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(fatalEvent);
@@ -43,18 +44,17 @@ public static class InvokeExtensions
 
         var config = context.GetOrCreateFeature<InvokeInternalConfig>(InternalInvokeConfigKey);
         var alreadyRegistered = config.AbortOnEvents.Any(existing =>
-            existing.Kind == AbortEventRegistrationKind.Event
-            && existing.Id == fatalEvent.Id);
+            existing.Kind == AbortEventRegistrationKind.Event && existing.Id == fatalEvent.Id
+        );
 
         if (alreadyRegistered) return;
 
         var registration = new AbortEventRegistration(
             id: fatalEvent.Id,
             kind: AbortEventRegistrationKind.Event,
-            (targetContext, onAbort) => targetContext.Subscribe(fatalEvent, envelope =>
-            {
-                onAbort(mapError(envelope.Body));
-            }));
+            (targetContext, onAbort) => targetContext.Subscribe(
+                fatalEvent, envelope => onAbort(mapError(envelope.Body))
+            ));
 
         config.AbortOnEvents.Add(registration);
     }
@@ -77,7 +77,8 @@ public static class InvokeExtensions
     public static void RegisterAbortEvent<TPayload>(
         this IEventContext context,
         MatchExpression<TPayload> fatalMatch,
-        Func<TPayload, Exception?>? mapError = null)
+        Func<TPayload, Exception?>? mapError = null
+    )
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(fatalMatch);
@@ -86,18 +87,17 @@ public static class InvokeExtensions
 
         var config = context.GetOrCreateFeature<InvokeInternalConfig>(InternalInvokeConfigKey);
         var alreadyRegistered = config.AbortOnEvents.Any(existing =>
-            existing.Kind == AbortEventRegistrationKind.MatchExpression
-            && existing.Id == fatalMatch.Id);
+            existing.Kind == AbortEventRegistrationKind.MatchExpression && existing.Id == fatalMatch.Id
+        );
 
         if (alreadyRegistered) return;
 
         var registration = new AbortEventRegistration(
             id: fatalMatch.Id,
             kind: AbortEventRegistrationKind.MatchExpression,
-            (targetContext, onAbort) => targetContext.Subscribe(fatalMatch, envelope =>
-            {
-                onAbort(mapError(envelope.Body));
-            }));
+            (targetContext, onAbort) => targetContext.Subscribe(
+                fatalMatch, envelope => onAbort(mapError(envelope.Body))
+            ));
 
         config.AbortOnEvents.Add(registration);
     }
@@ -113,11 +113,8 @@ public static class InvokeExtensions
     /// shape, call <see cref="RegisterAbortEvent{TPayload}(IEventContext, EventDefinition{TPayload}, Func{TPayload, Exception})"/>
     /// with an explicit mapper instead.
     /// </remarks>
-    public static void RegisterAbortEvent(
-        this IEventContext context,
-        EventDefinition<object> fatalEvent)
+    public static void RegisterAbortEvent(this IEventContext context, EventDefinition<object> fatalEvent)
     {
         RegisterAbortEvent<object>(context, fatalEvent);
     }
-
 }

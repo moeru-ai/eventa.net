@@ -31,9 +31,7 @@ public class InvokeExtensionsTests
         var fatalEvent = new EventDefinition<object>("fatal-event");
         var allowCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        async IAsyncEnumerable<int> Handler(
-            string _,
-            [EnumeratorCancellation] CancellationToken cancellationToken)
+        async IAsyncEnumerable<int> Handler(string _, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             yield return 1;
             await allowCompletion.Task.WaitAsync(cancellationToken);
@@ -44,7 +42,8 @@ public class InvokeExtensionsTests
 
         using var _ = context.RegisterStreamHandler(definition, Handler);
         var client = context.CreateInvokeStreamClient(definition);
-        await using var enumerator = client.InvokeAsync("request", CancellationToken.None)
+        await using var enumerator = client
+            .InvokeAsync("request", CancellationToken.None)
             .GetAsyncEnumerator(TestContext.Current.CancellationToken);
 
         Assert.True(await enumerator.MoveNextAsync());
@@ -122,7 +121,8 @@ public class InvokeExtensionsTests
         var nonFatalEvent = new EventDefinition<FatalEventPayload>("non-fatal-event");
         var fatalMatch = new MatchExpression<FatalEventPayload>(
             "fatal-match",
-            envelope => envelope.EventId.StartsWith("fatal-", StringComparison.Ordinal));
+            envelope => envelope.EventId.StartsWith("fatal-", StringComparison.Ordinal)
+        );
 
         context.RegisterAbortEvent(fatalMatch, static payload => payload.Error);
 

@@ -22,7 +22,8 @@ public static class EventStream
     /// <returns>A reusable client that can issue streaming invokes against the contract.</returns>
     public static InvokeStreamClient<TResponse, TRequest> CreateInvokeStreamClient<TResponse, TRequest>(
         this IEventContext context,
-        InvokeEventDefinition<TResponse, TRequest> eventDefinition)
+        InvokeEventDefinition<TResponse, TRequest> eventDefinition
+    )
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(eventDefinition);
@@ -40,7 +41,8 @@ public static class EventStream
     /// <returns>A reusable client that can issue streaming invokes against the contract.</returns>
     public static InvokeStreamClient<TResponse, TRequest> CreateInvokeStreamClient<TResponse, TRequest>(
         Func<IEventContext> contextFactory,
-        InvokeEventDefinition<TResponse, TRequest> eventDefinition)
+        InvokeEventDefinition<TResponse, TRequest> eventDefinition
+    )
     {
         ArgumentNullException.ThrowIfNull(contextFactory);
         ArgumentNullException.ThrowIfNull(eventDefinition);
@@ -68,7 +70,8 @@ public static class EventStream
     public static IDisposable RegisterStreamHandler<TResponse, TRequest>(
         this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
-        Func<TRequest, CancellationToken, IAsyncEnumerable<TResponse>> handler)
+        Func<TRequest, CancellationToken, IAsyncEnumerable<TResponse>> handler
+    )
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(eventDefinition);
@@ -93,7 +96,8 @@ public static class EventStream
     public static IDisposable RegisterStreamHandler<TResponse, TRequest>(
         this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
-        Func<IAsyncEnumerable<TRequest>, CancellationToken, IAsyncEnumerable<TResponse>> handler)
+        Func<IAsyncEnumerable<TRequest>, CancellationToken, IAsyncEnumerable<TResponse>> handler
+    )
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(eventDefinition);
@@ -122,7 +126,8 @@ public static class EventStream
     /// faults flow to the caller through normal async-enumerator semantics.
     /// </remarks>
     public static Func<TRequest, CancellationToken, IAsyncEnumerable<TResponse>> ToStreamHandler<TResponse, TRequest>(
-        Func<TRequest, Func<TResponse, ValueTask>, CancellationToken, Task> handler)
+        Func<TRequest, Func<TResponse, ValueTask>, CancellationToken, Task> handler
+    )
     {
         ArgumentNullException.ThrowIfNull(handler);
 
@@ -134,14 +139,11 @@ public static class EventStream
             {
                 try
                 {
-                    await handler(
-                        request,
-                        response =>
-                        {
-                            responses.TryWrite(response);
-                            return ValueTask.CompletedTask;
-                        },
-                        cancellationToken).ConfigureAwait(false);
+                    await handler(request, response =>
+                    {
+                        responses.TryWrite(response);
+                        return ValueTask.CompletedTask;
+                    }, cancellationToken).ConfigureAwait(false);
                     responses.Complete();
                 }
                 catch (Exception error)

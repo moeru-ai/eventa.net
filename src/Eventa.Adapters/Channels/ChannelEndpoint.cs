@@ -26,7 +26,8 @@ public sealed class ChannelEndpoint : IEventContext
     public ChannelEndpoint(
         ChannelReader<ChannelMessage> inbound,
         ChannelWriter<ChannelMessage> outbound,
-        ChannelEndpointOptions? options = null)
+        ChannelEndpointOptions? options = null
+    )
     {
         _inbound = inbound ?? throw new ArgumentNullException(nameof(inbound));
         _outbound = outbound ?? throw new ArgumentNullException(nameof(outbound));
@@ -47,10 +48,7 @@ public sealed class ChannelEndpoint : IEventContext
     }
 
     /// <inheritdoc />
-    public void Emit<TPayload, TOptions>(
-        EventDefinition<TPayload> eventDefinition,
-        TPayload payload,
-        TOptions options)
+    public void Emit<TPayload, TOptions>(EventDefinition<TPayload> eventDefinition, TPayload payload, TOptions options)
         where TOptions : class
     {
         ThrowIfTerminal();
@@ -60,7 +58,8 @@ public sealed class ChannelEndpoint : IEventContext
     /// <inheritdoc />
     public IDisposable Subscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
-        Action<EventEnvelope<TPayload>> handler)
+        Action<EventEnvelope<TPayload>> handler
+    )
     {
         ThrowIfTerminal();
         return _context.Subscribe(eventDefinition, handler);
@@ -69,7 +68,8 @@ public sealed class ChannelEndpoint : IEventContext
     /// <inheritdoc />
     public IDisposable SubscribeOnce<TPayload>(
         EventDefinition<TPayload> eventDefinition,
-        Action<EventEnvelope<TPayload>> handler)
+        Action<EventEnvelope<TPayload>> handler
+    )
     {
         ThrowIfTerminal();
         return _context.SubscribeOnce(eventDefinition, handler);
@@ -78,7 +78,8 @@ public sealed class ChannelEndpoint : IEventContext
     /// <inheritdoc />
     public void Unsubscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
-        Action<EventEnvelope<TPayload>>? handler = null)
+        Action<EventEnvelope<TPayload>>? handler = null
+    )
     {
         ThrowIfTerminal();
         _context.Unsubscribe(eventDefinition, handler);
@@ -87,7 +88,8 @@ public sealed class ChannelEndpoint : IEventContext
     /// <inheritdoc />
     public IDisposable Subscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
-        Action<EventEnvelope<TPayload>> handler)
+        Action<EventEnvelope<TPayload>> handler
+    )
     {
         ThrowIfTerminal();
         return _context.Subscribe(matchExpression, handler);
@@ -96,7 +98,8 @@ public sealed class ChannelEndpoint : IEventContext
     /// <inheritdoc />
     public IDisposable SubscribeOnce<TPayload>(
         MatchExpression<TPayload> matchExpression,
-        Action<EventEnvelope<TPayload>> handler)
+        Action<EventEnvelope<TPayload>> handler
+    )
     {
         ThrowIfTerminal();
         return _context.SubscribeOnce(matchExpression, handler);
@@ -105,7 +108,8 @@ public sealed class ChannelEndpoint : IEventContext
     /// <inheritdoc />
     public void Unsubscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
-        Action<EventEnvelope<TPayload>>? handler = null)
+        Action<EventEnvelope<TPayload>>? handler = null
+    )
     {
         ThrowIfTerminal();
         _context.Unsubscribe(matchExpression, handler);
@@ -117,7 +121,8 @@ public sealed class ChannelEndpoint : IEventContext
         Terminate(
             new ChannelClosedException("Channel endpoint disposed."),
             completeOutbound: _options.CompleteOutboundOnTerminal,
-            cancelInbound: true);
+            cancelInbound: true
+        );
     }
 
     /// <summary>
@@ -160,11 +165,7 @@ public sealed class ChannelEndpoint : IEventContext
     /// <param name="completeOutbound">Whether to complete the outbound channel writer.</param>
     /// <param name="cancelInbound">Whether to cancel the inbound pump.</param>
     /// <param name="outboundError">The optional error used to fault the outbound channel writer.</param>
-    private void Terminate(
-        Exception error,
-        bool completeOutbound,
-        bool cancelInbound,
-        Exception? outboundError = null)
+    private void Terminate(Exception error, bool completeOutbound, bool cancelInbound, Exception? outboundError = null)
     {
         ArgumentNullException.ThrowIfNull(error);
 
@@ -202,9 +203,8 @@ public sealed class ChannelEndpoint : IEventContext
         try
         {
             _context.Receive(
-                new EventEnvelope<ChannelClosedPayload>(
-                    _options.ClosedEvent.Id,
-                    new ChannelClosedPayload(error)));
+                new EventEnvelope<ChannelClosedPayload>(_options.ClosedEvent.Id, new ChannelClosedPayload(error))
+            );
         }
         catch { }
     }

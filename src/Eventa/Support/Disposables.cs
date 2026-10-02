@@ -113,7 +113,8 @@ internal static class ClientCancellation
     public static bool TryArm(
         ICollection<IDisposable> cleanup,
         Action onCancellation,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         ArgumentNullException.ThrowIfNull(cleanup);
         ArgumentNullException.ThrowIfNull(onCancellation);

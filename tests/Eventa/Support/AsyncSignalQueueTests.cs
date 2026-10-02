@@ -10,17 +10,20 @@ public class AsyncSignalQueueTests
             var queue = new AsyncSignalQueue<int>();
             var successfulWrites = 0;
             using var start = new ManualResetEventSlim(false);
-            var writers = Enumerable.Range(0, Environment.ProcessorCount * 2)
-                .Select(writerId => Task.Run(() =>
-                {
-                    start.Wait();
-
-                    while (queue.TryWrite(writerId))
+            var writers = Enumerable
+                .Range(0, Environment.ProcessorCount * 2)
+                .Select(writerId =>
+                    Task.Run(() =>
                     {
-                        Interlocked.Increment(ref successfulWrites);
-                        Thread.Yield();
-                    }
-                }))
+                        start.Wait();
+
+                        while (queue.TryWrite(writerId))
+                        {
+                            Interlocked.Increment(ref successfulWrites);
+                            Thread.Yield();
+                        }
+                    })
+                )
                 .ToArray();
 
             start.Set();
@@ -117,8 +120,9 @@ public class AsyncSignalQueueTests
         Assert.True(await enumerator.MoveNextAsync());
         Assert.Equal(7, enumerator.Current);
 
-        var actual = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await enumerator.MoveNextAsync().AsTask());
+        var actual = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await enumerator.MoveNextAsync().AsTask()
+        );
 
         Assert.Same(expected, actual);
 
@@ -164,7 +168,8 @@ public class AsyncSignalQueueTests
         using var cancellationSource = new CancellationTokenSource();
         cancellationSource.Cancel();
 
-        await using var enumerator = queue.ReadAll(respectConsumerCancellation: false)
+        await using var enumerator = queue
+            .ReadAll(respectConsumerCancellation: false)
             .GetAsyncEnumerator(cancellationSource.Token);
 
         Assert.True(await enumerator.MoveNextAsync());

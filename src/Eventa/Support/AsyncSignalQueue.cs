@@ -61,9 +61,7 @@ internal sealed class AsyncSignalQueue<T>
     /// owner; once normal completion or a producer fault is observed, disposal
     /// becomes a no-op.
     /// </summary>
-    public IAsyncEnumerable<T> ReadAll(
-        bool respectConsumerCancellation = true,
-        Func<ValueTask>? onDispose = null)
+    public IAsyncEnumerable<T> ReadAll(bool respectConsumerCancellation = true, Func<ValueTask>? onDispose = null)
     {
         return new AsyncSignalEnumerable<T>(_channel.Reader, respectConsumerCancellation, onDispose);
     }
@@ -76,7 +74,8 @@ internal sealed class AsyncSignalQueue<T>
 internal sealed class AsyncSignalEnumerable<T>(
     ChannelReader<T> reader,
     bool respectConsumerCancellation,
-    Func<ValueTask>? onDispose) : IAsyncEnumerable<T>
+    Func<ValueTask>? onDispose
+) : IAsyncEnumerable<T>
 {
     /// <summary>
     /// Creates an enumerator that can either honor the caller's cancellation
@@ -98,7 +97,8 @@ internal sealed class AsyncSignalEnumerable<T>(
 internal sealed class AsyncSignalEnumerator<T>(
     ChannelReader<T> reader,
     Func<ValueTask>? onDispose,
-    CancellationToken cancellationToken) : IAsyncEnumerator<T>
+    CancellationToken cancellationToken
+) : IAsyncEnumerator<T>
 {
     private int _isDisposed;
     private bool _isTerminal;

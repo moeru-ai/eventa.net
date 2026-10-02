@@ -27,7 +27,8 @@ public class DeferredDisposableTests
         registration.Attach(cancellationSource.Token.Register(() => Interlocked.Increment(ref firstCallbackCount)));
 
         var error = Assert.Throws<InvalidOperationException>(() =>
-            registration.Attach(cancellationSource.Token.Register(() => Interlocked.Increment(ref secondCallbackCount))));
+            registration.Attach(cancellationSource.Token.Register(() => Interlocked.Increment(ref secondCallbackCount)))
+        );
 
         registration.Dispose();
         cancellationSource.Cancel();

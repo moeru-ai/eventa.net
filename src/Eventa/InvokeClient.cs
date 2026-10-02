@@ -16,7 +16,8 @@ public sealed class InvokeClient<TResponse, TRequest>
 
     internal InvokeClient(
         Func<IEventContext> contextFactory,
-        InvokeEventDefinition<TResponse, TRequest> eventDefinition)
+        InvokeEventDefinition<TResponse, TRequest> eventDefinition
+    )
     {
         _contextFactory = contextFactory;
         _events = new InvokeEventBindings<TResponse, TRequest>(eventDefinition);
@@ -30,9 +31,7 @@ public sealed class InvokeClient<TResponse, TRequest>
     /// A token that aborts the invoke locally and emits the protocol abort event when canceled.
     /// </param>
     /// <returns>A task that resolves to the handler response payload.</returns>
-    public Task<TResponse> InvokeAsync(
-        TRequest request,
-        CancellationToken cancellationToken = default)
+    public Task<TResponse> InvokeAsync(TRequest request, CancellationToken cancellationToken = default)
     {
         var context = _contextFactory();
 
@@ -50,7 +49,8 @@ public sealed class InvokeClient<TResponse, TRequest>
                 context.Emit(_events.Send, new SendPayload<TRequest>(invokeId, request));
                 return Task.CompletedTask;
             },
-            cancellationToken).Run();
+            cancellationToken
+        ).Run();
     }
 
     /// <summary>
@@ -63,7 +63,8 @@ public sealed class InvokeClient<TResponse, TRequest>
     /// <returns>A task that resolves to the handler response payload.</returns>
     public Task<TResponse> InvokeAsync(
         IAsyncEnumerable<TRequest> request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default
+    )
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -92,7 +93,8 @@ public sealed class InvokeClient<TResponse, TRequest>
 
                 context.Emit(_events.SendStreamEnd, new StreamEndPayload(invokeId));
             },
-            cancellationToken).Run();
+            cancellationToken
+        ).Run();
     }
 }
 
@@ -113,7 +115,8 @@ public sealed class InvokeStreamClient<TResponse, TRequest>
 
     internal InvokeStreamClient(
         Func<IEventContext> contextFactory,
-        InvokeEventDefinition<TResponse, TRequest> eventDefinition)
+        InvokeEventDefinition<TResponse, TRequest> eventDefinition
+    )
     {
         _contextFactory = contextFactory;
         _events = new InvokeEventBindings<TResponse, TRequest>(eventDefinition);
@@ -127,9 +130,7 @@ public sealed class InvokeStreamClient<TResponse, TRequest>
     /// A token that aborts the invoke locally and emits the protocol abort event when canceled.
     /// </param>
     /// <returns>An async sequence that yields response items for this invoke.</returns>
-    public IAsyncEnumerable<TResponse> InvokeAsync(
-        TRequest request,
-        CancellationToken cancellationToken = default)
+    public IAsyncEnumerable<TResponse> InvokeAsync(TRequest request, CancellationToken cancellationToken = default)
     {
         var context = _contextFactory();
 
@@ -147,7 +148,8 @@ public sealed class InvokeStreamClient<TResponse, TRequest>
                 context.Emit(_events.Send, new SendPayload<TRequest>(invokeId, request));
                 return Task.CompletedTask;
             },
-            cancellationToken).Run();
+            cancellationToken
+        ).Run();
     }
 
     /// <summary>
@@ -160,7 +162,8 @@ public sealed class InvokeStreamClient<TResponse, TRequest>
     /// <returns>An async sequence that yields response items for this invoke.</returns>
     public IAsyncEnumerable<TResponse> InvokeAsync(
         IAsyncEnumerable<TRequest> request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default
+    )
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -189,6 +192,7 @@ public sealed class InvokeStreamClient<TResponse, TRequest>
 
                 context.Emit(_events.SendStreamEnd, new StreamEndPayload(invokeId));
             },
-            cancellationToken).Run();
+            cancellationToken
+        ).Run();
     }
 }

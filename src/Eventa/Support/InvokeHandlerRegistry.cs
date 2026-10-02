@@ -5,9 +5,7 @@ namespace Eventa;
 /// </summary>
 /// <param name="subscriptions">The protocol subscriptions that should be disposed when the handler is removed.</param>
 /// <param name="cleanup">Additional cleanup that tears down inflight state after subscriptions are removed.</param>
-internal sealed class HandlerRegistration(
-    IReadOnlyCollection<IDisposable> subscriptions,
-    Action cleanup) : IDisposable
+internal sealed class HandlerRegistration(IReadOnlyCollection<IDisposable> subscriptions, Action cleanup) : IDisposable
 {
     private int _disposed;
 
@@ -27,7 +25,6 @@ internal sealed class HandlerRegistration(
     }
 }
 
-
 /// <summary>
 /// Deduplicates handler registrations per event id and delegate instance for one context.
 /// </summary>
@@ -38,8 +35,9 @@ internal sealed class HandlerRegistration(
 internal sealed class InvokeHandlerRegistry
 {
     private readonly Lock _sync = new();
-    private readonly Dictionary<string, Dictionary<Delegate, HandlerRegistration>> _registrations =
-        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<Delegate, HandlerRegistration>> _registrations = new(
+        StringComparer.Ordinal
+    );
 
     /// <summary>
     /// Gets the existing registration for the handler or creates it once for the specified event.
@@ -52,10 +50,7 @@ internal sealed class InvokeHandlerRegistry
     /// <returns>
     /// An <see cref="IDisposable"/> that removes the tracked handler registration when disposed.
     /// </returns>
-    public IDisposable Register(
-        string eventId,
-        Delegate handler,
-        Func<HandlerRegistration> createRegistration)
+    public IDisposable Register(string eventId, Delegate handler, Func<HandlerRegistration> createRegistration)
     {
         lock (_sync)
         {
@@ -87,8 +82,10 @@ internal sealed class InvokeHandlerRegistry
 
         lock (_sync)
         {
-            if (!_registrations.TryGetValue(eventId, out var handlers)
-                || !handlers.TryGetValue(handler, out registration)) return;
+            if (
+                !_registrations.TryGetValue(eventId, out var handlers)
+                || !handlers.TryGetValue(handler, out registration)
+            ) return;
 
             handlers.Remove(handler);
             if (handlers.Count == 0)

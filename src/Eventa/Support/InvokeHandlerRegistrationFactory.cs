@@ -27,18 +27,15 @@ internal static class InvokeHandlerRegistrationFactory
     public static HandlerRegistration CreateUnary<TResponse, TRequest>(
         IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
-        Func<TRequest, CancellationToken, Task<TResponse>> handler)
+        Func<TRequest, CancellationToken, Task<TResponse>> handler
+    )
     {
         var events = new InvokeEventBindings<TResponse, TRequest>(eventDefinition);
         var inflight = new InvocationCancellationTracker();
 
         async Task HandleInvokeAsync(string invokeId, TRequest request)
         {
-            var session = new UnaryRequestHandlerSession<TResponse, TRequest>(
-                context,
-                events,
-                inflight,
-                invokeId);
+            var session = new UnaryRequestHandlerSession<TResponse, TRequest>(context, events, inflight, invokeId);
 
             await session.RunAsync(async cancellationToken =>
             {
@@ -49,7 +46,8 @@ internal static class InvokeHandlerRegistrationFactory
 
         return new HandlerRegistration(
             CreateUnaryRequestSubscriptions(context, events, HandleInvokeAsync, inflight.TryCancel),
-            inflight.CancelAllAndDispose);
+            inflight.CancelAllAndDispose
+        );
     }
 
     /// <summary>
@@ -66,27 +64,25 @@ internal static class InvokeHandlerRegistrationFactory
     public static HandlerRegistration CreateUnary<TResponse, TRequest>(
         IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
-        Func<TRequest, CancellationToken, IAsyncEnumerable<TResponse>> handler)
+        Func<TRequest, CancellationToken, IAsyncEnumerable<TResponse>> handler
+    )
     {
         var events = new InvokeEventBindings<TResponse, TRequest>(eventDefinition);
         var inflight = new InvocationCancellationTracker();
 
         async Task HandleInvokeAsync(string invokeId, TRequest request)
         {
-            var session = new UnaryRequestHandlerSession<TResponse, TRequest>(
-                context,
-                events,
-                inflight,
-                invokeId);
+            var session = new UnaryRequestHandlerSession<TResponse, TRequest>(context, events, inflight, invokeId);
 
-            await session.RunAsync(cancellationToken => session.ForwardStreamResponsesAsync(
-                handler(request, cancellationToken),
-                cancellationToken)).ConfigureAwait(false);
+            await session.RunAsync(cancellationToken =>
+                session.ForwardStreamResponsesAsync(handler(request, cancellationToken), cancellationToken)
+            ).ConfigureAwait(false);
         }
 
         return new HandlerRegistration(
             CreateUnaryRequestSubscriptions(context, events, HandleInvokeAsync, inflight.TryCancel),
-            inflight.CancelAllAndDispose);
+            inflight.CancelAllAndDispose
+        );
     }
 
     /// <summary>
@@ -103,11 +99,15 @@ internal static class InvokeHandlerRegistrationFactory
         IEventContext context,
         InvokeEventBindings<TResponse, TRequest> events,
         Func<string, TRequest, Task> handleInvokeAsync,
-        Action<string> tryCancel)
+        Action<string> tryCancel
+    )
     {
         return
         [
-            context.Subscribe(events.Send, envelope => _ = handleInvokeAsync(envelope.Body.InvokeId, envelope.Body.Content)),
+            context.Subscribe(
+                events.Send,
+                envelope => _ = handleInvokeAsync(envelope.Body.InvokeId, envelope.Body.Content)
+            ),
             context.Subscribe(events.SendAbort, envelope => tryCancel(envelope.Body.InvokeId)),
         ];
     }
@@ -130,18 +130,15 @@ internal static class InvokeHandlerRegistrationFactory
     public static HandlerRegistration CreateRequestStream<TResponse, TRequest>(
         IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
-        Func<IAsyncEnumerable<TRequest>, CancellationToken, Task<TResponse>> handler)
+        Func<IAsyncEnumerable<TRequest>, CancellationToken, Task<TResponse>> handler
+    )
     {
         var events = new InvokeEventBindings<TResponse, TRequest>(eventDefinition);
         var inflight = new RequestStreamInvocationTracker<TRequest>();
 
         async Task HandleInvokeAsync(RequestStreamInvocationState<TRequest> state)
         {
-            var session = new RequestStreamHandlerSession<TResponse, TRequest>(
-                context,
-                events,
-                inflight,
-                state);
+            var session = new RequestStreamHandlerSession<TResponse, TRequest>(context, events, inflight, state);
 
             await session.RunAsync(async (request, cancellationToken) =>
             {
@@ -157,7 +154,8 @@ internal static class InvokeHandlerRegistrationFactory
 
         return new HandlerRegistration(
             CreateRequestStreamSubscriptions(context, events, GetOrCreateState),
-            inflight.AbortAllAndDispose);
+            inflight.AbortAllAndDispose
+        );
     }
 
     /// <summary>
@@ -174,22 +172,19 @@ internal static class InvokeHandlerRegistrationFactory
     public static HandlerRegistration CreateRequestStream<TResponse, TRequest>(
         IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
-        Func<IAsyncEnumerable<TRequest>, CancellationToken, IAsyncEnumerable<TResponse>> handler)
+        Func<IAsyncEnumerable<TRequest>, CancellationToken, IAsyncEnumerable<TResponse>> handler
+    )
     {
         var events = new InvokeEventBindings<TResponse, TRequest>(eventDefinition);
         var inflight = new RequestStreamInvocationTracker<TRequest>();
 
         async Task HandleInvokeAsync(RequestStreamInvocationState<TRequest> state)
         {
-            var session = new RequestStreamHandlerSession<TResponse, TRequest>(
-                context,
-                events,
-                inflight,
-                state);
+            var session = new RequestStreamHandlerSession<TResponse, TRequest>(context, events, inflight, state);
 
-            await session.RunAsync((request, cancellationToken) => session.ForwardStreamResponsesAsync(
-                handler(request, cancellationToken),
-                cancellationToken)).ConfigureAwait(false);
+            await session.RunAsync((request, cancellationToken) =>
+                session.ForwardStreamResponsesAsync(handler(request, cancellationToken), cancellationToken)
+            ).ConfigureAwait(false);
         }
 
         RequestStreamInvocationState<TRequest> GetOrCreateState(string invokeId)
@@ -199,7 +194,8 @@ internal static class InvokeHandlerRegistrationFactory
 
         return new HandlerRegistration(
             CreateRequestStreamSubscriptions(context, events, GetOrCreateState),
-            inflight.AbortAllAndDispose);
+            inflight.AbortAllAndDispose
+        );
     }
 
     /// <summary>
@@ -214,24 +210,25 @@ internal static class InvokeHandlerRegistrationFactory
     private static List<IDisposable> CreateRequestStreamSubscriptions<TResponse, TRequest>(
         IEventContext context,
         InvokeEventBindings<TResponse, TRequest> events,
-        Func<string, RequestStreamInvocationState<TRequest>> getOrCreateState)
+        Func<string, RequestStreamInvocationState<TRequest>> getOrCreateState
+    )
     {
         return
         [
-            context.Subscribe(events.Send, envelope =>
-            {
-                getOrCreateState(envelope.Body.InvokeId).Requests.TryWrite(envelope.Body.Content);
-            }),
-            context.Subscribe(events.SendStreamEnd, envelope =>
-            {
+            context.Subscribe(
+                events.Send,
+                envelope => getOrCreateState(envelope.Body.InvokeId).Requests.TryWrite(envelope.Body.Content)
+            ),
+            context.Subscribe(
+                events.SendStreamEnd,
                 // Keep empty request streams as a supported C# contract.
-                getOrCreateState(envelope.Body.InvokeId).Requests.Complete();
-            }),
-            context.Subscribe(events.SendAbort, envelope =>
-            {
+                envelope => getOrCreateState(envelope.Body.InvokeId).Requests.Complete()
+            ),
+            context.Subscribe(
+                events.SendAbort,
                 // Keep pre-first-item aborts as a supported C# contract.
-                getOrCreateState(envelope.Body.InvokeId).Abort();
-            }),
+                envelope => getOrCreateState(envelope.Body.InvokeId).Abort()
+            ),
         ];
     }
 
@@ -245,7 +242,8 @@ internal static class InvokeHandlerRegistrationFactory
     private abstract class InvokeHandlerSession<TResponse, TRequest>(
         IEventContext context,
         InvokeEventBindings<TResponse, TRequest> events,
-        string invokeId)
+        string invokeId
+    )
     {
         private readonly IEventContext _context = context;
         private readonly InvokeEventBindings<TResponse, TRequest> _events = events;
@@ -261,7 +259,8 @@ internal static class InvokeHandlerRegistrationFactory
 
         public async Task ForwardStreamResponsesAsync(
             IAsyncEnumerable<TResponse> responses,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken
+        )
         {
             // Avoid starting handler-stream enumeration after an early abort won.
             if (cancellationToken.IsCancellationRequested) return;
@@ -293,7 +292,8 @@ internal static class InvokeHandlerRegistrationFactory
         IEventContext context,
         InvokeEventBindings<TResponse, TRequest> events,
         InvocationCancellationTracker inflight,
-        string invokeId) : InvokeHandlerSession<TResponse, TRequest>(context, events, invokeId)
+        string invokeId
+    ) : InvokeHandlerSession<TResponse, TRequest>(context, events, invokeId)
     {
         private readonly InvocationCancellationTracker _inflight = inflight;
 
@@ -330,7 +330,8 @@ internal static class InvokeHandlerRegistrationFactory
         IEventContext context,
         InvokeEventBindings<TResponse, TRequest> events,
         RequestStreamInvocationTracker<TRequest> inflight,
-        RequestStreamInvocationState<TRequest> state) : InvokeHandlerSession<TResponse, TRequest>(context, events, state.InvokeId)
+        RequestStreamInvocationState<TRequest> state
+    ) : InvokeHandlerSession<TResponse, TRequest>(context, events, state.InvokeId)
     {
         private readonly RequestStreamInvocationTracker<TRequest> _inflight = inflight;
         private readonly RequestStreamInvocationState<TRequest> _state = state;
@@ -344,7 +345,8 @@ internal static class InvokeHandlerRegistrationFactory
 
                 await executeAsync(
                     _state.Requests.ReadAll(respectConsumerCancellation: false),
-                    _state.CancellationSource.Token).ConfigureAwait(false);
+                    _state.CancellationSource.Token
+                ).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (_state.CancellationSource.IsCancellationRequested) { return; }
             catch (Exception error)

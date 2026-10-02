@@ -20,7 +20,9 @@ internal sealed class EventListenerStore
     /// <summary>
     /// Stores one-shot direct event listeners by event id.
     /// </summary>
-    private readonly Dictionary<string, HashSet<EventListenerRegistration>> _onceListeners = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HashSet<EventListenerRegistration>> _onceListeners = new(
+        StringComparer.Ordinal
+    );
 
     /// <summary>
     /// Stores the payload type first bound to each event id.
@@ -50,7 +52,8 @@ internal sealed class EventListenerStore
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler,
         EventListenerLifetime lifetime,
-        string operation)
+        string operation
+    )
     {
         ArgumentNullException.ThrowIfNull(eventDefinition);
         ArgumentNullException.ThrowIfNull(handler);
@@ -99,7 +102,8 @@ internal sealed class EventListenerStore
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler,
         EventListenerLifetime lifetime,
-        string operation)
+        string operation
+    )
     {
         ArgumentNullException.ThrowIfNull(matchExpression);
         ArgumentNullException.ThrowIfNull(handler);
@@ -148,7 +152,8 @@ internal sealed class EventListenerStore
     public void Unsubscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>>? handler,
-        string operation)
+        string operation
+    )
     {
         ArgumentNullException.ThrowIfNull(eventDefinition);
 
@@ -180,7 +185,8 @@ internal sealed class EventListenerStore
     public void Unsubscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>>? handler,
-        string operation)
+        string operation
+    )
     {
         ArgumentNullException.ThrowIfNull(matchExpression);
 
@@ -211,7 +217,8 @@ internal sealed class EventListenerStore
     public EventDispatchSnapshot<TPayload> CreateDispatchSnapshot<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         TPayload payload,
-        string operation)
+        string operation
+    )
     {
         ArgumentNullException.ThrowIfNull(eventDefinition);
 
@@ -235,9 +242,7 @@ internal sealed class EventListenerStore
     /// <param name="envelope">The already-created envelope to dispatch.</param>
     /// <param name="operation">The caller operation name used in payload-binding diagnostics.</param>
     /// <returns>A stable erased listener snapshot that can be invoked outside the store lock.</returns>
-    public BoxedEventDispatchSnapshot CreateDispatchSnapshot(
-        IEventEnvelope envelope,
-        string operation)
+    public BoxedEventDispatchSnapshot CreateDispatchSnapshot(IEventEnvelope envelope, string operation)
     {
         ArgumentNullException.ThrowIfNull(envelope);
 
@@ -276,22 +281,22 @@ internal sealed class EventListenerStore
     /// <returns>The selected listeners grouped by dispatch kind.</returns>
     private SelectedListeners CollectSelectedListeners(IEventEnvelope envelope)
     {
-        var listeners = new List<EventListenerRegistration>();
-        var onceListeners = new List<EventListenerRegistration>();
-        if (_listeners.TryGetValue(envelope.EventId, out var registeredListeners))
+        IReadOnlyList<EventListenerRegistration> listeners = [];
+        IReadOnlyList<EventListenerRegistration> onceListeners = [];
+        if (_listeners.TryGetValue(envelope.EventId, out HashSet<EventListenerRegistration>? registeredListeners))
         {
-            listeners.AddRange(registeredListeners);
+            listeners = [.. registeredListeners];
         }
 
         if (_onceListeners.TryGetValue(envelope.EventId, out var registeredOnceListeners))
         {
-            onceListeners.AddRange(registeredOnceListeners);
+            onceListeners = [.. registeredOnceListeners];
             _onceListeners.Remove(envelope.EventId);
         }
 
-        var matchedListeners = new List<MatchedListenerEntry>();
-        var matchedOnceListeners = new List<MatchedListenerEntry>();
-        var emptyMatchRegistrationIds = new List<string>();
+        List<MatchedListenerEntry>? matchedListeners = null;
+        List<MatchedListenerEntry>? matchedOnceListeners = null;
+        List<string>? emptyMatchRegistrationIds = null;
 
         foreach (var registration in _matchListeners.Values)
         {
@@ -299,31 +304,35 @@ internal sealed class EventListenerStore
 
             foreach (var listener in registration.Listeners)
             {
+                matchedListeners ??= [];
                 matchedListeners.Add(new MatchedListenerEntry(registration.Id, listener));
             }
 
             foreach (var listener in registration.OnceListeners)
             {
+                matchedOnceListeners ??= [];
                 matchedOnceListeners.Add(new MatchedListenerEntry(registration.Id, listener));
             }
 
             registration.OnceListeners.Clear();
             if (registration.IsEmpty)
             {
+                emptyMatchRegistrationIds ??= [];
                 emptyMatchRegistrationIds.Add(registration.Id);
             }
         }
 
-        foreach (var matchExpressionId in emptyMatchRegistrationIds)
+        foreach (var matchExpressionId in emptyMatchRegistrationIds ?? [])
         {
             _matchListeners.Remove(matchExpressionId);
         }
 
-        return new SelectedListeners(
-            listeners,
-            onceListeners,
-            matchedListeners,
-            matchedOnceListeners);
+        IReadOnlyList<MatchedListenerEntry> selectedListeners =
+            matchedListeners is null ? [] : matchedListeners;
+        IReadOnlyList<MatchedListenerEntry> selectedOnceListeners =
+            matchedOnceListeners is null ? [] : matchedOnceListeners;
+
+        return new SelectedListeners(listeners, onceListeners, selectedListeners, selectedOnceListeners);
     }
 
     /// <summary>
@@ -334,7 +343,8 @@ internal sealed class EventListenerStore
         IReadOnlyList<EventListenerRegistration> Listeners,
         IReadOnlyList<EventListenerRegistration> OnceListeners,
         IReadOnlyList<MatchedListenerEntry> MatchedListeners,
-        IReadOnlyList<MatchedListenerEntry> MatchedOnceListeners)
+        IReadOnlyList<MatchedListenerEntry> MatchedOnceListeners
+    )
     {
         /// <summary>
         /// Projects the selected registrations into the typed dispatch snapshot used by local emits.
@@ -359,15 +369,23 @@ internal sealed class EventListenerStore
             var matchedListeners = new List<MatchListenerDispatch<TPayload>>(MatchedListeners.Count);
             foreach (var entry in MatchedListeners)
             {
-                matchedListeners.Add(new MatchListenerDispatch<TPayload>(
-                    entry.MatchExpressionId,
-                    entry.Registration.GetHandler<TPayload>()));
+                matchedListeners.Add(
+                    new MatchListenerDispatch<TPayload>(
+                        entry.MatchExpressionId,
+                        entry.Registration.GetHandler<TPayload>()
+                    )
+                );
             }
 
             var matchedOnceListeners = new List<MatchListenerDispatch<TPayload>>(MatchedOnceListeners.Count);
             foreach (var entry in MatchedOnceListeners)
             {
-                matchedOnceListeners.Add(new MatchListenerDispatch<TPayload>(entry.MatchExpressionId, entry.Registration.GetHandler<TPayload>()));
+                matchedOnceListeners.Add(
+                    new MatchListenerDispatch<TPayload>(
+                        entry.MatchExpressionId,
+                        entry.Registration.GetHandler<TPayload>()
+                    )
+                );
             }
 
             return new EventDispatchSnapshot<TPayload>(
@@ -375,7 +393,8 @@ internal sealed class EventListenerStore
                 listeners,
                 onceListeners,
                 matchedListeners,
-                matchedOnceListeners);
+                matchedOnceListeners
+            );
         }
 
         /// <summary>
@@ -401,13 +420,17 @@ internal sealed class EventListenerStore
             var matchedListeners = new List<BoxedEventListenerDispatch>(MatchedListeners.Count);
             foreach (var entry in MatchedListeners)
             {
-                matchedListeners.Add(new BoxedEventListenerDispatch(entry.MatchExpressionId, entry.Registration.Dispatch));
+                matchedListeners.Add(
+                    new BoxedEventListenerDispatch(entry.MatchExpressionId, entry.Registration.Dispatch)
+                );
             }
 
             var matchedOnceListeners = new List<BoxedEventListenerDispatch>(MatchedOnceListeners.Count);
             foreach (var entry in MatchedOnceListeners)
             {
-                matchedOnceListeners.Add(new BoxedEventListenerDispatch(entry.MatchExpressionId, entry.Registration.Dispatch));
+                matchedOnceListeners.Add(
+                    new BoxedEventListenerDispatch(entry.MatchExpressionId, entry.Registration.Dispatch)
+                );
             }
 
             return new BoxedEventDispatchSnapshot(
@@ -415,7 +438,8 @@ internal sealed class EventListenerStore
                 listeners,
                 onceListeners,
                 matchedListeners,
-                matchedOnceListeners);
+                matchedOnceListeners
+            );
         }
     }
 
@@ -424,7 +448,8 @@ internal sealed class EventListenerStore
     /// </summary>
     private readonly record struct MatchedListenerEntry(
         string MatchExpressionId,
-        EventListenerRegistration Registration);
+        EventListenerRegistration Registration
+    );
 
     /// <summary>
     /// Selects the direct event listener registry to mutate.
@@ -456,7 +481,8 @@ internal sealed class EventListenerStore
     private void RemoveDirectListenerFromRegistry(
         string eventId,
         Delegate handler,
-        DirectListenerRegistryKind registryKind)
+        DirectListenerRegistryKind registryKind
+    )
     {
         lock (_sync)
         {
@@ -521,7 +547,8 @@ internal sealed class EventListenerStore
     private void RemoveMatchListenerFromBuckets(
         string matchExpressionId,
         Delegate handler,
-        MatchListenerBucketKind bucketKind)
+        MatchListenerBucketKind bucketKind
+    )
     {
         lock (_sync)
         {
@@ -559,7 +586,7 @@ internal sealed class EventListenerStore
     /// <param name="eventDefinition">The event definition whose id should be bound.</param>
     private void BindEventPayloadType<TPayload>(EventDefinition<TPayload> eventDefinition)
     {
-        BindPayloadType(_eventPayloadTypes, eventDefinition.Id, typeof(TPayload));
+        _eventPayloadTypes.TryAdd(eventDefinition.Id, typeof(TPayload));
     }
 
     /// <summary>
@@ -569,7 +596,7 @@ internal sealed class EventListenerStore
     /// <param name="payloadType">The erased payload type associated with the identifier.</param>
     private void BindEventPayloadType(string eventId, Type payloadType)
     {
-        BindPayloadType(_eventPayloadTypes, eventId, payloadType);
+        _eventPayloadTypes.TryAdd(eventId, payloadType);
     }
 
     /// <summary>
@@ -579,24 +606,7 @@ internal sealed class EventListenerStore
     /// <param name="matchExpression">The match expression whose id should be bound.</param>
     private void BindMatchExpressionPayloadType<TPayload>(MatchExpression<TPayload> matchExpression)
     {
-        BindPayloadType(_matchExpressionPayloadTypes, matchExpression.Id, typeof(TPayload));
-    }
-
-    /// <summary>
-    /// Stores the first payload-type binding for an identifier and ignores later matching writes.
-    /// </summary>
-    /// <param name="registry">The identifier-to-payload-type map to update.</param>
-    /// <param name="id">The event or match-expression identifier being bound.</param>
-    /// <param name="payloadType">The payload type associated with the identifier.</param>
-    private static void BindPayloadType(
-        Dictionary<string, Type> registry,
-        string id,
-        Type payloadType)
-    {
-        if (!registry.ContainsKey(id))
-        {
-            registry[id] = payloadType;
-        }
+        _matchExpressionPayloadTypes.TryAdd(matchExpression.Id, typeof(TPayload));
     }
 
     /// <summary>
@@ -607,14 +617,10 @@ internal sealed class EventListenerStore
     /// <param name="operation">The caller operation name used in the exception message.</param>
     private void CheckEventPayloadTypeBinding<TPayload>(
         EventDefinition<TPayload> eventDefinition,
-        [CallerMemberName] string operation = "")
+        [CallerMemberName] string operation = ""
+    )
     {
-        CheckPayloadTypeBinding(
-            _eventPayloadTypes,
-            eventDefinition,
-            eventDefinition.Id,
-            typeof(TPayload),
-            operation);
+        CheckPayloadTypeBinding(_eventPayloadTypes, eventDefinition, eventDefinition.Id, typeof(TPayload), operation);
     }
 
     /// <summary>
@@ -626,14 +632,10 @@ internal sealed class EventListenerStore
     private void CheckEventPayloadTypeBinding(
         string eventId,
         Type payloadType,
-        [CallerMemberName] string operation = "")
+        [CallerMemberName] string operation = ""
+    )
     {
-        CheckPayloadTypeBinding(
-            _eventPayloadTypes,
-            nameof(EventDefinition<>),
-            eventId,
-            payloadType,
-            operation);
+        CheckPayloadTypeBinding(_eventPayloadTypes, nameof(EventDefinition<>), eventId, payloadType, operation);
     }
 
     /// <summary>
@@ -644,14 +646,16 @@ internal sealed class EventListenerStore
     /// <param name="operation">The caller operation name used in the exception message.</param>
     private void CheckMatchExpressionPayloadTypeBinding<TPayload>(
         MatchExpression<TPayload> matchExpression,
-        [CallerMemberName] string operation = "")
+        [CallerMemberName] string operation = ""
+    )
     {
         CheckPayloadTypeBinding(
             _matchExpressionPayloadTypes,
             matchExpression,
             matchExpression.Id,
             typeof(TPayload),
-            operation);
+            operation
+        );
     }
 
     /// <summary>
@@ -668,7 +672,8 @@ internal sealed class EventListenerStore
         TBinding binding,
         string id,
         Type currentType,
-        string operation)
+        string operation
+    )
     {
         var bindingTarget = DescribeBindingTarget(binding);
 
@@ -688,13 +693,15 @@ internal sealed class EventListenerStore
         string bindingTarget,
         string id,
         Type currentType,
-        string operation)
+        string operation
+    )
     {
         if (!registry.TryGetValue(id, out var boundType) || boundType == currentType) return;
 
         throw new InvalidOperationException(
             $"Cannot perform '{operation}' for {bindingTarget} '{id}' with payload type '{FormatTypeName(currentType)}' " +
-            $"because this EventContext already bound {bindingTarget} '{id}' to payload type '{FormatTypeName(boundType)}'.");
+            $"because this EventContext already bound {bindingTarget} '{id}' to payload type '{FormatTypeName(boundType)}'."
+        );
     }
 
     /// <summary>
@@ -706,9 +713,7 @@ internal sealed class EventListenerStore
     private static string DescribeBindingTarget<TBinding>(TBinding binding)
     {
         var bindingType = binding?.GetType() ?? typeof(TBinding);
-        var genericDefinition = bindingType.IsGenericType
-            ? bindingType.GetGenericTypeDefinition()
-            : bindingType;
+        var genericDefinition = bindingType.IsGenericType ? bindingType.GetGenericTypeDefinition() : bindingType;
 
         if (genericDefinition == typeof(EventDefinition<>)) return nameof(EventDefinition<>);
 
@@ -734,10 +739,7 @@ internal sealed class EventListenerStore
     {
         private readonly Action<IEventEnvelope> _dispatch;
 
-        private EventListenerRegistration(
-            Delegate handler,
-            Type payloadType,
-            Action<IEventEnvelope> dispatch)
+        private EventListenerRegistration(Delegate handler, Type payloadType, Action<IEventEnvelope> dispatch)
         {
             Handler = handler;
             PayloadType = payloadType;
@@ -779,7 +781,8 @@ internal sealed class EventListenerStore
                     }
 
                     handler(typedEnvelope);
-                });
+                }
+            );
         }
 
         /// <summary>
@@ -801,7 +804,8 @@ internal sealed class EventListenerStore
             return Handler is Action<EventEnvelope<TPayload>> typedHandler
                 ? typedHandler
                 : throw new InvalidOperationException(
-                $"Cannot dispatch listener with payload type '{FormatTypeName(PayloadType)}' as '{FormatTypeName(typeof(TPayload))}'.");
+                    $"Cannot dispatch listener with payload type '{FormatTypeName(PayloadType)}' as '{FormatTypeName(typeof(TPayload))}'."
+                );
         }
 
         private sealed class HandlerEqualityComparer : IEqualityComparer<EventListenerRegistration>
@@ -823,10 +827,7 @@ internal sealed class EventListenerStore
     /// </summary>
     private sealed class MatchListenerRegistration
     {
-        private MatchListenerRegistration(
-            string id,
-            Type payloadType,
-            Func<IEventEnvelope, bool> matcher)
+        private MatchListenerRegistration(string id, Type payloadType, Func<IEventEnvelope, bool> matcher)
         {
             Id = id;
             PayloadType = payloadType;
@@ -856,7 +857,8 @@ internal sealed class EventListenerStore
         /// <summary>
         /// Gets one-shot match-expression listeners.
         /// </summary>
-        public HashSet<EventListenerRegistration> OnceListeners { get; } = new(EventListenerRegistration.HandlerComparer);
+        public HashSet<EventListenerRegistration> OnceListeners { get; } =
+            new(EventListenerRegistration.HandlerComparer);
 
         /// <summary>
         /// Gets whether this registration has no remaining listeners.
@@ -884,7 +886,8 @@ internal sealed class EventListenerStore
                     }
 
                     return matchExpression.Matcher(typedEnvelope);
-                });
+                }
+            );
         }
     }
 }
@@ -919,7 +922,8 @@ internal sealed record EventDispatchSnapshot<TPayload>(
     IReadOnlyList<Action<EventEnvelope<TPayload>>> Listeners,
     IReadOnlyList<Action<EventEnvelope<TPayload>>> OnceListeners,
     IReadOnlyList<MatchListenerDispatch<TPayload>> MatchedListeners,
-    IReadOnlyList<MatchListenerDispatch<TPayload>> MatchedOnceListeners);
+    IReadOnlyList<MatchListenerDispatch<TPayload>> MatchedOnceListeners
+);
 
 /// <summary>
 /// Describes a match-expression listener selected for dispatch.
@@ -929,7 +933,8 @@ internal sealed record EventDispatchSnapshot<TPayload>(
 /// <param name="Handler">The callback to invoke with the emitted envelope.</param>
 internal readonly record struct MatchListenerDispatch<TPayload>(
     string MatchExpressionId,
-    Action<EventEnvelope<TPayload>> Handler);
+    Action<EventEnvelope<TPayload>> Handler
+);
 
 /// <summary>
 /// Contains erased listeners selected for one transport-originated envelope dispatch.
@@ -944,16 +949,15 @@ internal sealed record BoxedEventDispatchSnapshot(
     IReadOnlyList<BoxedEventListenerDispatch> Listeners,
     IReadOnlyList<BoxedEventListenerDispatch> OnceListeners,
     IReadOnlyList<BoxedEventListenerDispatch> MatchedListeners,
-    IReadOnlyList<BoxedEventListenerDispatch> MatchedOnceListeners);
+    IReadOnlyList<BoxedEventListenerDispatch> MatchedOnceListeners
+);
 
 /// <summary>
 /// Describes an erased listener selected for dispatch.
 /// </summary>
 /// <param name="EventId">The listener key that should be reported to adapters.</param>
 /// <param name="Handler">The erased listener callback.</param>
-internal readonly record struct BoxedEventListenerDispatch(
-    string EventId,
-    Action<IEventEnvelope> Handler);
+internal readonly record struct BoxedEventListenerDispatch(string EventId, Action<IEventEnvelope> Handler);
 
 /// <summary>
 /// Thrown when an erased envelope advertises one payload type but its runtime envelope type cannot
@@ -964,11 +968,13 @@ internal readonly record struct BoxedEventListenerDispatch(
 /// </remarks>
 /// <param name="envelope">The envelope whose runtime type was rejected.</param>
 /// <param name="expectedPayloadType">The payload type selected by the listener.</param>
-internal sealed class EventEnvelopeTypeMismatchException(IEventEnvelope envelope, Type expectedPayloadType) : InvalidOperationException(
-    $"Cannot dispatch envelope for event '{envelope.EventId}' " +
-    $"with payload type '{envelope.PayloadType}' because runtime " +
-    $"envelope type '{envelope.GetType()}' is not compatible with " +
-    $"{nameof(EventEnvelope<>)} carrying payload type '{expectedPayloadType}'.")
+internal sealed class EventEnvelopeTypeMismatchException(IEventEnvelope envelope, Type expectedPayloadType)
+    : InvalidOperationException(
+        $"Cannot dispatch envelope for event '{envelope.EventId}' " +
+        $"with payload type '{envelope.PayloadType}' because runtime " +
+        $"envelope type '{envelope.GetType()}' is not compatible with " +
+        $"{nameof(EventEnvelope<>)} carrying payload type '{expectedPayloadType}'."
+    )
 {
     /// <summary>
     /// Gets the event identifier carried by the rejected envelope.
