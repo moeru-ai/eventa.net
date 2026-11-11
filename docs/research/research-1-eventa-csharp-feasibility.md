@@ -1,5 +1,7 @@
 # Eventa -> C# .NET 10 Migration Feasibility Report
 
+> **Standards update (2026-10-02):** This is a feasibility-stage research document. For normative cross-language protocol decisions, use the later [`research-3-eventa-typescript-1.0.2-compatibility.md`](research-3-eventa-typescript-1.0.2-compatibility.md) as the source of truth: every wire-visible behavior, event-routing rule, and invoke lifecycle semantic must prioritize TypeScript 1.0.2 compatibility. Only local invocation patterns, type representations, and resource-management APIs may use .NET-native design. Any earlier recommendation in this document that conflicts with this rule is superseded.
+
 ## 1. Eventa Architecture Overview
 
 ### 1.1 What Eventa Is
@@ -221,8 +223,9 @@ Positive and negative cases for `isAsyncIterable()` and `isReadableStream()`.
 
 ### 3.1 Overall Principle
 
-> **Treat Eventa purely as the protocol layer and a JavaScript reference. The
-> C# implementation must follow .NET event-system best practices.**
+> **Treat TypeScript 1.0.2 as the normative wire-protocol reference. The C#
+> implementation should use .NET-native APIs only for local, non-wire-visible
+> surfaces.**
 
 Key mapping decisions:
 
@@ -900,14 +903,14 @@ Eventa.sln
 
 Note: this section describes migration-time risks and design-level differences.
 For differences verified against the current playground C# implementation, see
-`docs/eventa-csharp-known-differences.md`.
+`docs/research/research-2-eventa-csharp-known-differences.md`.
 
 ### 7.1 TS Features Without a Direct Equivalent
 
 | TS feature | Impact | C# alternative |
 |------|------|------|
 | Conditional types (`T extends X ? Y : Z`) | Invoke signatures can make parameters optional when `Req` is `undefined` | Provide multiple overloads (`Invoke()` and `Invoke(TReq req)`) |
-| `Transferable` / Structured Clone | `withTransfer()` has no direct meaning | Not needed: C# cross-process communication already uses serialization |
+| `Transferable` / Structured Clone | `withTransfer()` has no direct .NET equivalent | Not part of the first JSON compatibility slice; any exposed transfer/binary behavior must define a TypeScript-compatible wire or transport extension |
 | Glob matching (`picomatch`) | `matchBy("pattern*")` | Use `Microsoft.Extensions.FileSystemGlobbing` or regex |
 | Function-stub serialization | `withRemoteMethods()` serializes functions into markers | **Lower priority**: delegates are not serializable in C# and need a different design such as named service registration |
 
@@ -918,7 +921,7 @@ For differences verified against the current playground C# implementation, see
 | **Thread safety** | TS is single-threaded; C# must handle concurrent access | Use `ConcurrentDictionary` plus `lock`/`ReaderWriterLockSlim` where needed |
 | **Memory leaks** | TS relies on GC and closures; C# event subscriptions are strong references | `Subscribe()` should return `IDisposable`; encourage `using` |
 | **Exception propagation** | TS catches everything uniformly; C# distinguishes `Exception` and `OperationCanceledException` | Emit handler failures through protocol error events; preserve `OperationCanceledException` for cancellation |
-| **Serialization** | TS uses JSON / Structured Clone; C# must choose explicitly | Default to `System.Text.Json`; let adapters plug in `IEventaSerializer` |
+| **Serialization** | TS uses JSON / Structured Clone; C# must choose explicitly | `System.Text.Json` may be the implementation, but its naming, omission, numeric, byte, date, and error contracts must be configured to match TypeScript 1.0.2; adapters may provide `IEventaSerializer` |
 | **Performance** | `Channel<T>` can outperform TS `ReadableStream` for high-throughput buffering | Use `BoundedChannelOptions` to control backpressure |
 
 ### 7.3 Areas Not Worth Migrating Directly
