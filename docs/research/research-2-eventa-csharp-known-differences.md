@@ -68,7 +68,7 @@ The migration feasibility report also describes match-expression listener and on
 
 Relevant docs reference:
 
-- `playground/docs/eventa-csharp-feasibility.md:53`
+- `docs/research/research-1-eventa-csharp-feasibility.md:53`
 
 ### C# behavior
 
