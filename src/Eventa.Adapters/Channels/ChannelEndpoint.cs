@@ -7,6 +7,7 @@ namespace Eventa.Adapters.Channels;
 /// <summary>
 /// Represents one side of an in-process channel transport and exposes Eventa context operations.
 /// </summary>
+[Obsolete(LegacyTypedApi.Adapter, DiagnosticId = LegacyTypedApi.DiagnosticId)]
 public sealed class ChannelEndpoint : IEventContext
 {
     private readonly ChannelReader<ChannelMessage> _inbound;
@@ -23,6 +24,9 @@ public sealed class ChannelEndpoint : IEventContext
     /// <param name="inbound">The reader used for remote inbound messages.</param>
     /// <param name="outbound">The writer used for local outbound messages.</param>
     /// <param name="options">Optional endpoint configuration.</param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="inbound"/> or <paramref name="outbound"/> is <see langword="null"/>.
+    /// </exception>
     public ChannelEndpoint(
         ChannelReader<ChannelMessage> inbound,
         ChannelWriter<ChannelMessage> outbound,
@@ -41,6 +45,7 @@ public sealed class ChannelEndpoint : IEventContext
     public IDictionary<string, object> Extensions => _context.Extensions;
 
     /// <inheritdoc />
+    /// <exception cref="ChannelClosedException">The endpoint has reached a terminal state.</exception>
     public void Emit<TPayload>(EventDefinition<TPayload> eventDefinition, TPayload payload)
     {
         ThrowIfTerminal();
@@ -48,6 +53,7 @@ public sealed class ChannelEndpoint : IEventContext
     }
 
     /// <inheritdoc />
+    /// <exception cref="ChannelClosedException">The endpoint has reached a terminal state.</exception>
     public void Emit<TPayload, TOptions>(EventDefinition<TPayload> eventDefinition, TPayload payload, TOptions options)
         where TOptions : class
     {
@@ -56,6 +62,7 @@ public sealed class ChannelEndpoint : IEventContext
     }
 
     /// <inheritdoc />
+    /// <exception cref="ChannelClosedException">The endpoint has reached a terminal state.</exception>
     public IDisposable Subscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler
@@ -66,6 +73,7 @@ public sealed class ChannelEndpoint : IEventContext
     }
 
     /// <inheritdoc />
+    /// <exception cref="ChannelClosedException">The endpoint has reached a terminal state.</exception>
     public IDisposable SubscribeOnce<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler
@@ -76,6 +84,7 @@ public sealed class ChannelEndpoint : IEventContext
     }
 
     /// <inheritdoc />
+    /// <exception cref="ChannelClosedException">The endpoint has reached a terminal state.</exception>
     public void Unsubscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>>? handler = null
@@ -86,6 +95,7 @@ public sealed class ChannelEndpoint : IEventContext
     }
 
     /// <inheritdoc />
+    /// <exception cref="ChannelClosedException">The endpoint has reached a terminal state.</exception>
     public IDisposable Subscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler
@@ -96,6 +106,7 @@ public sealed class ChannelEndpoint : IEventContext
     }
 
     /// <inheritdoc />
+    /// <exception cref="ChannelClosedException">The endpoint has reached a terminal state.</exception>
     public IDisposable SubscribeOnce<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler
@@ -106,6 +117,7 @@ public sealed class ChannelEndpoint : IEventContext
     }
 
     /// <inheritdoc />
+    /// <exception cref="ChannelClosedException">The endpoint has reached a terminal state.</exception>
     public void Unsubscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>>? handler = null

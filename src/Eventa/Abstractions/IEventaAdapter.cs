@@ -7,6 +7,7 @@ namespace Eventa;
 /// Implementations are called after in-process dispatch has already happened, so adapter code can
 /// forward envelopes or record telemetry without taking control of listener execution order.
 /// </remarks>
+[Obsolete(LegacyTypedApi.Adapter, DiagnosticId = LegacyTypedApi.DiagnosticId)]
 public interface IEventaAdapter : IDisposable
 {
     /// <summary>

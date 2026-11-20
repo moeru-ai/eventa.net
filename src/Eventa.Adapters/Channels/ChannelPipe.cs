@@ -5,6 +5,7 @@ namespace Eventa.Adapters.Channels;
 /// <summary>
 /// Owns one connected in-memory pair of channel endpoints.
 /// </summary>
+[Obsolete(LegacyTypedApi.Adapter, DiagnosticId = LegacyTypedApi.DiagnosticId)]
 public sealed class ChannelPipe : IDisposable
 {
     private static readonly UnboundedChannelOptions ChannelOptions = new()

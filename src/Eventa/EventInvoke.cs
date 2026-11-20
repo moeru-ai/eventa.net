@@ -24,6 +24,9 @@ public static class EventInvoke
     /// <param name="context">The context that will send invoke protocol events.</param>
     /// <param name="eventDefinition">The invoke contract that defines the protocol event ids.</param>
     /// <returns>A reusable client that can issue invokes against the contract.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="context"/> or <paramref name="eventDefinition"/> is <see langword="null"/>.
+    /// </exception>
     public static InvokeClient<TResponse, TRequest> CreateInvokeClient<TResponse, TRequest>(
         this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition
@@ -43,6 +46,9 @@ public static class EventInvoke
     /// <param name="contextFactory">A factory that supplies the context used for each invoke.</param>
     /// <param name="eventDefinition">The invoke contract that defines the protocol event ids.</param>
     /// <returns>A reusable client that can issue invokes against the contract.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="contextFactory"/> or <paramref name="eventDefinition"/> is <see langword="null"/>.
+    /// </exception>
     public static InvokeClient<TResponse, TRequest> CreateInvokeClient<TResponse, TRequest>(
         Func<IEventContext> contextFactory,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition
@@ -71,6 +77,10 @@ public static class EventInvoke
     /// <returns>
     /// An <see cref="IDisposable"/> that removes the handler registration and cleans up inflight state.
     /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="context"/>, <paramref name="eventDefinition"/>, or <paramref name="handler"/>
+    /// is <see langword="null"/>.
+    /// </exception>
     public static IDisposable RegisterInvokeHandler<TResponse, TRequest>(
         this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
@@ -103,6 +113,10 @@ public static class EventInvoke
     /// <returns>
     /// An <see cref="IDisposable"/> that removes the handler registration and cleans up inflight state.
     /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="context"/>, <paramref name="eventDefinition"/>, or <paramref name="handler"/>
+    /// is <see langword="null"/>.
+    /// </exception>
     public static IDisposable RegisterInvokeHandler<TResponse, TRequest>(
         this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,

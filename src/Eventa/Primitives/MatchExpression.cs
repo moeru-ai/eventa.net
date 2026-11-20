@@ -21,6 +21,7 @@ public sealed record MatchExpression<TPayload>(string Id, Func<EventEnvelope<TPa
     /// The optional stable identifier for the expression. When omitted, Eventa generates one.
     /// </param>
     /// <returns>A new <see cref="MatchExpression{TPayload}"/> instance.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="matcher"/> is <see langword="null"/>.</exception>
     public static MatchExpression<TPayload> Create(Func<EventEnvelope<TPayload>, bool> matcher, string? id = null)
     {
         ArgumentNullException.ThrowIfNull(matcher);
@@ -32,6 +33,7 @@ public sealed record MatchExpression<TPayload>(string Id, Func<EventEnvelope<TPa
     /// </summary>
     /// <param name="other">The other match expression to combine with this one.</param>
     /// <returns>A new combined expression that applies logical AND semantics.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="other"/> is <see langword="null"/>.</exception>
     public MatchExpression<TPayload> And(MatchExpression<TPayload> other)
     {
         ArgumentNullException.ThrowIfNull(other);
@@ -43,6 +45,7 @@ public sealed record MatchExpression<TPayload>(string Id, Func<EventEnvelope<TPa
     /// </summary>
     /// <param name="other">The other match expression to combine with this one.</param>
     /// <returns>A new combined expression that applies logical OR semantics.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="other"/> is <see langword="null"/>.</exception>
     public MatchExpression<TPayload> Or(MatchExpression<TPayload> other)
     {
         ArgumentNullException.ThrowIfNull(other);

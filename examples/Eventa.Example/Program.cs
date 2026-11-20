@@ -22,9 +22,35 @@ internal static class Program
         await RunStreamingVariants();
         RunContextUtilities();
         await RunOperationalHooks();
+        await RunDeliveryForwarding();
 
         Console.WriteLine();
         Console.WriteLine("Examples completed.");
+    }
+
+    private static async Task RunDeliveryForwarding()
+    {
+        WriteSection("9. Event delivery and forwarding");
+
+        using EventContext local = new();
+        using EventContext next = new();
+        using IDisposable localSubscription = local.Subscribe("example:delivery", delivery =>
+        {
+            WriteLine("local hop budget", delivery.hopsRemaining);
+            return Task.CompletedTask;
+        });
+        using IDisposable nextSubscription = next.Subscribe("example:delivery", delivery =>
+        {
+            WriteLine("next hop budget", delivery.hopsRemaining);
+            return Task.CompletedTask;
+        });
+
+        Delivery original = Delivery.Create("application/example", new Eventa.Eventa(
+            "example:delivery", new MovePayload(10, 20)));
+        EventContext target = local;
+        await target.AcceptAsync(original);
+        await target.AcceptAsync(original); // Successful no-op; independent of the first outcome.
+        await next.AcceptAsync(original.Forward());
     }
 
     private static void RunBasicEvents()

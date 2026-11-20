@@ -20,6 +20,9 @@ public static class EventStream
     /// <param name="context">The context that will send and receive invoke protocol events.</param>
     /// <param name="eventDefinition">The invoke contract that defines the protocol event ids.</param>
     /// <returns>A reusable client that can issue streaming invokes against the contract.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="context"/> or <paramref name="eventDefinition"/> is <see langword="null"/>.
+    /// </exception>
     public static InvokeStreamClient<TResponse, TRequest> CreateInvokeStreamClient<TResponse, TRequest>(
         this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition
@@ -39,6 +42,9 @@ public static class EventStream
     /// <param name="contextFactory">A factory that supplies the context used for each invoke.</param>
     /// <param name="eventDefinition">The invoke contract that defines the protocol event ids.</param>
     /// <returns>A reusable client that can issue streaming invokes against the contract.</returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="contextFactory"/> or <paramref name="eventDefinition"/> is <see langword="null"/>.
+    /// </exception>
     public static InvokeStreamClient<TResponse, TRequest> CreateInvokeStreamClient<TResponse, TRequest>(
         Func<IEventContext> contextFactory,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition
@@ -67,6 +73,10 @@ public static class EventStream
     /// <returns>
     /// An <see cref="IDisposable"/> that removes the handler registration and cleans up inflight state.
     /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="context"/>, <paramref name="eventDefinition"/>, or <paramref name="handler"/>
+    /// is <see langword="null"/>.
+    /// </exception>
     public static IDisposable RegisterStreamHandler<TResponse, TRequest>(
         this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
@@ -93,6 +103,10 @@ public static class EventStream
     /// <returns>
     /// An <see cref="IDisposable"/> that removes the handler registration and cleans up inflight state.
     /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="context"/>, <paramref name="eventDefinition"/>, or <paramref name="handler"/>
+    /// is <see langword="null"/>.
+    /// </exception>
     public static IDisposable RegisterStreamHandler<TResponse, TRequest>(
         this IEventContext context,
         InvokeEventDefinition<TResponse, TRequest> eventDefinition,
@@ -125,6 +139,7 @@ public static class EventStream
     /// Response items are buffered in an <see cref="AsyncSignalQueue{T}"/>, so completion and
     /// faults flow to the caller through normal async-enumerator semantics.
     /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="handler"/> is <see langword="null"/>.</exception>
     public static Func<TRequest, CancellationToken, IAsyncEnumerable<TResponse>> ToStreamHandler<TResponse, TRequest>(
         Func<TRequest, Func<TResponse, ValueTask>, CancellationToken, Task> handler
     )

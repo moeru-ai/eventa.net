@@ -3,19 +3,26 @@ namespace Eventa;
 /// <summary>
 /// Provides Eventa's default in-memory implementation of <see cref="IEventContext"/>.
 /// </summary>
+/// <param name="adapter">An optional adapter that observes the typed API's send and receive notifications.</param>
 /// <remarks>
 /// <para>
-/// The context dispatches event listeners synchronously on the caller thread and keeps a
+/// The legacy typed API dispatches event listeners synchronously on the caller thread and keeps a
 /// per-context binding between each event or match-expression identifier and exactly one payload
 /// type.
 /// </para>
 /// <para>
-/// Adapter hooks are notified after local listeners run, which lets transports observe sent and
+/// Legacy adapter hooks are notified after local typed listeners run, which lets transports observe sent and
 /// received envelopes without taking over the in-process dispatch path.
 /// </para>
+/// <para>
+/// The opaque Delivery path uses <see cref="AcceptAsync"/> and asynchronous listeners registered
+/// by event identifier. It has independent completion and recent-history semantics, does not
+/// bind payload types, and never invokes the legacy adapter hooks.
+/// </para>
 /// </remarks>
-public sealed class EventContext(IEventaAdapter? adapter = null)
+public sealed partial class EventContext(IEventaAdapter? adapter = null)
     : IEventContext,
+        IDeliveryTarget,
         IEventInboundDispatcher,
         IEventTransportFatalNotifier
 {
@@ -33,6 +40,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// <summary>
     /// Gets the adapter that observes local send and receive activity for this context.
     /// </summary>
+    [Obsolete(LegacyTypedApi.Adapter, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public IEventaAdapter? Adapter { get; } = adapter;
 
     /// <summary>
@@ -42,7 +50,7 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// An optional adapter that should observe emitted and received envelopes after local dispatch.
     /// </param>
     /// <returns>A new <see cref="EventContext"/> instance.</returns>
-    public static IEventContext Create(IEventaAdapter? adapter = null)
+    public static EventContext Create(IEventaAdapter? adapter = null)
     {
         return new EventContext(adapter);
     }
@@ -53,10 +61,14 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// <typeparam name="TPayload">The payload type carried by the event.</typeparam>
     /// <param name="eventDefinition">The event definition that identifies the channel to emit on.</param>
     /// <param name="payload">The payload value to wrap in the emitted envelope.</param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="eventDefinition"/> is <see langword="null"/>.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when this context has already associated <paramref name="eventDefinition"/> with a
     /// different payload type.
     /// </exception>
+    [Obsolete(LegacyTypedApi.Emit, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public void Emit<TPayload>(EventDefinition<TPayload> eventDefinition, TPayload payload)
     {
         EmitCore(eventDefinition, payload, options: null);
@@ -70,10 +82,14 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// <param name="eventDefinition">The event definition that identifies the channel to emit on.</param>
     /// <param name="payload">The payload value to wrap in the emitted envelope.</param>
     /// <param name="options">Optional adapter metadata associated with this emit operation.</param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="eventDefinition"/> is <see langword="null"/>.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when this context has already associated <paramref name="eventDefinition"/> with a
     /// different payload type.
     /// </exception>
+    [Obsolete(LegacyTypedApi.EmitWithOptions, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public void Emit<TPayload, TOptions>(EventDefinition<TPayload> eventDefinition, TPayload payload, TOptions options)
         where TOptions : class
     {
@@ -116,6 +132,11 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// </summary>
     /// <param name="envelope">The already-created envelope to dispatch.</param>
     /// <param name="options">Optional adapter metadata forwarded to <see cref="IEventaAdapter.OnReceived(string, object?, object?)"/>.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="envelope"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The event identifier is already bound to a different payload type.
+    /// </exception>
+    [Obsolete(LegacyTypedApi.Receive, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public void Receive(IEventEnvelope envelope, object? options = null)
     {
         var dispatch = _listeners.CreateDispatchSnapshot(envelope, nameof(Receive));
@@ -149,6 +170,8 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// Faults invoke sessions that are pending on this context because its transport terminated.
     /// </summary>
     /// <param name="error">The terminal transport error.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="error"/> is <see langword="null"/>.</exception>
+    [Obsolete(LegacyTypedApi.TransportFatal, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public void NotifyTransportFatal(Exception error)
     {
         ArgumentNullException.ThrowIfNull(error);
@@ -168,10 +191,14 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// <returns>
     /// An <see cref="IDisposable"/> that removes this listener from the context when disposed.
     /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="eventDefinition"/> or <paramref name="handler"/> is <see langword="null"/>.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when this context has already associated <paramref name="eventDefinition"/> with a
     /// different payload type.
     /// </exception>
+    [Obsolete(LegacyTypedApi.Subscribe, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public IDisposable Subscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler
@@ -193,10 +220,14 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// The listener is removed before callbacks are invoked, so re-entrant emits do not run the
     /// same one-shot handler twice.
     /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="eventDefinition"/> or <paramref name="handler"/> is <see langword="null"/>.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when this context has already associated <paramref name="eventDefinition"/> with a
     /// different payload type.
     /// </exception>
+    [Obsolete(LegacyTypedApi.SubscribeOnce, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public IDisposable SubscribeOnce<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler
@@ -214,10 +245,14 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// The specific listener to remove. When <see langword="null"/>, all regular and one-shot
     /// listeners for the event are removed.
     /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="eventDefinition"/> is <see langword="null"/>.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when this context has already associated <paramref name="eventDefinition"/> with a
     /// different payload type.
     /// </exception>
+    [Obsolete(LegacyTypedApi.Unsubscribe, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public void Unsubscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>>? handler = null
@@ -235,10 +270,14 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// <returns>
     /// An <see cref="IDisposable"/> that removes this match listener when disposed.
     /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="matchExpression"/> or <paramref name="handler"/> is <see langword="null"/>.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when this context has already associated <paramref name="matchExpression"/> with a
     /// different payload type.
     /// </exception>
+    [Obsolete(LegacyTypedApi.MatchSubscription, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public IDisposable Subscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler
@@ -260,10 +299,14 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// The listener is removed before callbacks are invoked, so re-entrant emits do not run the
     /// same one-shot match handler twice.
     /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="matchExpression"/> or <paramref name="handler"/> is <see langword="null"/>.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when this context has already associated <paramref name="matchExpression"/> with a
     /// different payload type.
     /// </exception>
+    [Obsolete(LegacyTypedApi.MatchSubscription, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public IDisposable SubscribeOnce<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler
@@ -281,10 +324,14 @@ public sealed class EventContext(IEventaAdapter? adapter = null)
     /// The specific listener to remove. When <see langword="null"/>, all regular and one-shot
     /// listeners for the match expression are removed.
     /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="matchExpression"/> is <see langword="null"/>.
+    /// </exception>
     /// <exception cref="InvalidOperationException">
     /// Thrown when this context has already associated <paramref name="matchExpression"/> with a
     /// different payload type.
     /// </exception>
+    [Obsolete(LegacyTypedApi.MatchSubscription, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     public void Unsubscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>>? handler = null
