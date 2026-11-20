@@ -143,6 +143,32 @@ public sealed class DeliveryIngressTests
     }
 
     [Fact]
+    public async Task AcceptAsync_WithCanceledListenerTask_FaultsAndAllowsOtherWorkToContinue()
+    {
+        using EventContext context = new();
+        CancellationToken cancellationToken = new(canceled: true);
+        Task canceled = Task.FromCanceled(cancellationToken);
+        TaskCompletionSource pending = NewSignal();
+        int pendingCalls = 0;
+        using IDisposable first = context.Subscribe("event", _ => canceled);
+        using IDisposable second = context.Subscribe("event", _ => { pendingCalls++; return pending.Task; });
+        Delivery delivery = NewDelivery();
+
+        Task accepted = context.AcceptAsync(delivery);
+        OperationCanceledException error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            accepted.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+
+        Assert.Equal(TaskStatus.Canceled, canceled.Status);
+        Assert.Equal(TaskStatus.Faulted, accepted.Status);
+        Assert.Equal(cancellationToken, error.CancellationToken);
+        Assert.Same(error, accepted.Exception!.InnerException);
+        Assert.False(pending.Task.IsCompleted);
+        Assert.True(context.AcceptAsync(delivery).IsCompletedSuccessfully);
+        Assert.Equal(1, pendingCalls);
+        pending.SetResult();
+    }
+
+    [Fact]
     public async Task AcceptAsync_WithConcurrentFailures_KeepsOneOriginalException()
     {
         using EventContext context = new();

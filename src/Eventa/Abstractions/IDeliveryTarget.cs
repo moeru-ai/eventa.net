@@ -11,7 +11,8 @@ public interface IDeliveryTarget
     /// A task that succeeds when all selected listeners succeed. An unhandled event or a recently seen
     /// delivery ID completes successfully without dispatch. If a listener fails, the task faults
     /// after every selected listener has been invoked, even if some listener tasks are still pending.
-    /// Awaiting the task propagates an observed listener exception.
+    /// A canceled listener task counts as a failure. Awaiting the returned task propagates the selected
+    /// listener exception, including the cancellation exception if that listener's failure is selected.
     /// </returns>
     /// <remarks>
     /// Duplicates complete independently of any earlier submission. Local dispatch preserves the hop

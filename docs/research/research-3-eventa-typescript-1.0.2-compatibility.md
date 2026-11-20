@@ -558,6 +558,8 @@ After outward failure, Core must still observe every remaining listener Task's t
 
 The listener Exception selected by fail-fast aggregation propagates unchanged to the caller. `await AcceptAsync(...)` observes that exception. Core adds no mandatory EventaDispatchException or Eventa-specific wrapper, and defines no AggregateException contract collecting all listener failures.
 
+A canceled listener Task counts as a listener failure. If its cancellation is selected, the `AcceptAsync` Task completes in the `Faulted` state and awaiting it throws the cancellation exception observed from the listener Task. Other started listeners can continue. The delivery ID remains recently seen, and a retained duplicate still completes successfully.
+
 Concurrent or near-simultaneous failures have no stable selection order, particularly no registration-order winner. JavaScript rejection reasons can be arbitrary values; .NET failures use Exceptions. No wrapper or JavaScript microtask timing emulation is needed. Later faults are observed but cannot replace or change the completed outward failure.
 
 #### Routing diagnostics and later faults
@@ -923,6 +925,7 @@ See §4.3.
 5. Both synchronous and asynchronous failures propagate through the outward Task; awaiting yields the selected original Exception instance without forced wrappers or aggregate-all behavior.
 6. A concurrent-failure winner need only be one actual listener failure. Tests assume neither registration-order selection nor aggregation of all failures.
 7. Later faults remain observed without unobserved Task exceptions, changing the selected exception, or delaying completion into all-settled behavior. No public diagnostic subsystem is required.
+8. A canceled listener Task faults `AcceptAsync` with the observed cancellation exception when selected. Other matching listeners are invoked and can continue after the fault. The retained duplicate succeeds immediately.
 
 ### 7.5 Hops and envelope derivation
 

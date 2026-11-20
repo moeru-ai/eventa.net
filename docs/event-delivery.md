@@ -67,6 +67,11 @@ callback has been invoked. A listener that returns `null` is treated as failing 
 `InvalidOperationException`. Other started work can continue after the failure reaches
 the caller.
 
+A canceled listener task also counts as a failure. If its cancellation is the reported
+failure, the task returned by `AcceptAsync` is `Faulted`, and awaiting it throws the
+listener task's cancellation exception. Other listeners can continue, and a repeated
+submission still succeeds while its ID is retained.
+
 ## Forward and share event data
 
 Local acceptance preserves the hop budget. `Forward()` creates a separate delivery with
