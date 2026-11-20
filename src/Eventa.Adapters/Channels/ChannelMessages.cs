@@ -7,6 +7,7 @@ namespace Eventa.Adapters.Channels;
 /// </summary>
 /// <param name="Envelope">The already-created Eventa envelope.</param>
 /// <param name="Options">Optional adapter metadata associated with the envelope.</param>
+[Obsolete(LegacyTypedApi.Adapter, DiagnosticId = LegacyTypedApi.DiagnosticId)]
 public sealed record ChannelMessage(IEventEnvelope Envelope, object? Options = null);
 
 /// <summary>

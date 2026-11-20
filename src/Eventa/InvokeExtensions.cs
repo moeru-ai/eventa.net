@@ -31,6 +31,9 @@ public static class InvokeExtensions
     /// explicit so abort handling stays AOT-safe and does not rely on reflection-based property
     /// probing such as looking for an <c>Error</c> member by name.
     /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="context"/> or <paramref name="fatalEvent"/> is <see langword="null"/>.
+    /// </exception>
     public static void RegisterAbortEvent<TPayload>(
         this IEventContext context,
         EventDefinition<TPayload> fatalEvent,
@@ -74,6 +77,9 @@ public static class InvokeExtensions
     /// when <typeparamref name="TPayload"/> is emitted as an <see cref="Exception"/> instance. Other
     /// payload shapes fall back to Eventa's default abort exception.
     /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="context"/> or <paramref name="fatalMatch"/> is <see langword="null"/>.
+    /// </exception>
     public static void RegisterAbortEvent<TPayload>(
         this IEventContext context,
         MatchExpression<TPayload> fatalMatch,
@@ -113,6 +119,9 @@ public static class InvokeExtensions
     /// shape, call <see cref="RegisterAbortEvent{TPayload}(IEventContext, EventDefinition{TPayload}, Func{TPayload, Exception})"/>
     /// with an explicit mapper instead.
     /// </remarks>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="context"/> or <paramref name="fatalEvent"/> is <see langword="null"/>.
+    /// </exception>
     public static void RegisterAbortEvent(this IEventContext context, EventDefinition<object> fatalEvent)
     {
         RegisterAbortEvent<object>(context, fatalEvent);

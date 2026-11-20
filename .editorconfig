@@ -29,7 +29,7 @@ indent_size = 4
 tab_width = 4
 
 # New line preferences
-insert_final_newline = false
+insert_final_newline = true
 
 #### .NET Coding Conventions ####
 [*.{cs,vb}]
@@ -124,7 +124,7 @@ csharp_style_prefer_readonly_struct = true:suggestion
 csharp_style_prefer_readonly_struct_member = true:suggestion
 
 # Code-block preferences
-csharp_prefer_braces = true:silent
+csharp_prefer_braces = when_multiline:silent
 csharp_prefer_simple_using_statement = true:suggestion
 csharp_style_namespace_declarations = file_scoped:suggestion
 csharp_style_prefer_method_group_conversion = true:silent
@@ -322,7 +322,7 @@ dotnet_naming_symbols.non_field_members.applicable_kinds = property, event, meth
 dotnet_naming_symbols.non_field_members.applicable_accessibilities = public, internal, private, protected, protected_internal, private_protected
 dotnet_naming_symbols.non_field_members.required_modifiers = 
 
-dotnet_naming_symbols.type_parameters.applicable_kinds = namespace
+dotnet_naming_symbols.type_parameters.applicable_kinds = type_parameter
 dotnet_naming_symbols.type_parameters.applicable_accessibilities = *
 dotnet_naming_symbols.type_parameters.required_modifiers = 
 
@@ -389,3 +389,10 @@ dotnet_naming_style.s_camelcase.required_prefix = s_
 dotnet_naming_style.s_camelcase.required_suffix = 
 dotnet_naming_style.s_camelcase.word_separator = 
 dotnet_naming_style.s_camelcase.capitalization = camel_case
+
+# Core protocol properties intentionally retain their camelCase names.
+[src/Eventa/Abstractions/IDeliveryLike.cs]
+dotnet_diagnostic.IDE1006.severity = none
+
+[src/Eventa/Primitives/Eventa.cs]
+dotnet_diagnostic.IDE1006.severity = none

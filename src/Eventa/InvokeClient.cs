@@ -31,6 +31,7 @@ public sealed class InvokeClient<TResponse, TRequest>
     /// A token that aborts the invoke locally and emits the protocol abort event when canceled.
     /// </param>
     /// <returns>A task that resolves to the handler response payload.</returns>
+    /// <exception cref="OperationCanceledException">The returned task is canceled.</exception>
     public Task<TResponse> InvokeAsync(TRequest request, CancellationToken cancellationToken = default)
     {
         var context = _contextFactory();
@@ -61,6 +62,8 @@ public sealed class InvokeClient<TResponse, TRequest>
     /// A token that aborts the invoke locally and emits the protocol abort event when canceled.
     /// </param>
     /// <returns>A task that resolves to the handler response payload.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="request"/> is <see langword="null"/>.</exception>
+    /// <exception cref="OperationCanceledException">The returned task is canceled.</exception>
     public Task<TResponse> InvokeAsync(
         IAsyncEnumerable<TRequest> request,
         CancellationToken cancellationToken = default
@@ -130,6 +133,7 @@ public sealed class InvokeStreamClient<TResponse, TRequest>
     /// A token that aborts the invoke locally and emits the protocol abort event when canceled.
     /// </param>
     /// <returns>An async sequence that yields response items for this invoke.</returns>
+    /// <exception cref="OperationCanceledException">Enumeration observes cancellation of the invoke.</exception>
     public IAsyncEnumerable<TResponse> InvokeAsync(TRequest request, CancellationToken cancellationToken = default)
     {
         var context = _contextFactory();
@@ -160,6 +164,8 @@ public sealed class InvokeStreamClient<TResponse, TRequest>
     /// A token that aborts the invoke locally and emits the protocol abort event when canceled.
     /// </param>
     /// <returns>An async sequence that yields response items for this invoke.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="request"/> is <see langword="null"/>.</exception>
+    /// <exception cref="OperationCanceledException">Enumeration observes cancellation of the invoke.</exception>
     public IAsyncEnumerable<TResponse> InvokeAsync(
         IAsyncEnumerable<TRequest> request,
         CancellationToken cancellationToken = default

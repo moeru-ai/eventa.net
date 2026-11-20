@@ -31,6 +31,13 @@ public interface IEventContext : IDisposable
     /// <typeparam name="TPayload">The payload type carried by the event.</typeparam>
     /// <param name="eventDefinition">The event definition that identifies the channel to emit on.</param>
     /// <param name="payload">The payload value to wrap in the emitted envelope.</param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="eventDefinition"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The event identifier is already bound to a different payload type.
+    /// </exception>
+    [Obsolete(LegacyTypedApi.Emit, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     void Emit<TPayload>(EventDefinition<TPayload> eventDefinition, TPayload payload);
 
     /// <summary>
@@ -41,6 +48,13 @@ public interface IEventContext : IDisposable
     /// <param name="eventDefinition">The event definition that identifies the channel to emit on.</param>
     /// <param name="payload">The payload value to wrap in the emitted envelope.</param>
     /// <param name="options">Optional adapter metadata associated with this emit operation.</param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="eventDefinition"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The event identifier is already bound to a different payload type.
+    /// </exception>
+    [Obsolete(LegacyTypedApi.EmitWithOptions, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     void Emit<TPayload, TOptions>(EventDefinition<TPayload> eventDefinition, TPayload payload, TOptions options)
         where TOptions : class;
 
@@ -53,6 +67,13 @@ public interface IEventContext : IDisposable
     /// <returns>
     /// An <see cref="IDisposable"/> that removes this listener from the context when disposed.
     /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="eventDefinition"/> or <paramref name="handler"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The event identifier is already bound to a different payload type.
+    /// </exception>
+    [Obsolete(LegacyTypedApi.Subscribe, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     IDisposable Subscribe<TPayload>(EventDefinition<TPayload> eventDefinition, Action<EventEnvelope<TPayload>> handler);
 
     /// <summary>
@@ -64,6 +85,13 @@ public interface IEventContext : IDisposable
     /// <returns>
     /// An <see cref="IDisposable"/> that removes this pending one-shot listener when disposed.
     /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="eventDefinition"/> or <paramref name="handler"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The event identifier is already bound to a different payload type.
+    /// </exception>
+    [Obsolete(LegacyTypedApi.SubscribeOnce, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     IDisposable SubscribeOnce<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>> handler
@@ -78,6 +106,13 @@ public interface IEventContext : IDisposable
     /// The specific listener to remove. When <see langword="null"/>, all regular and one-shot
     /// listeners for the event are removed.
     /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="eventDefinition"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The event identifier is already bound to a different payload type.
+    /// </exception>
+    [Obsolete(LegacyTypedApi.Unsubscribe, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     void Unsubscribe<TPayload>(
         EventDefinition<TPayload> eventDefinition,
         Action<EventEnvelope<TPayload>>? handler = null
@@ -92,6 +127,13 @@ public interface IEventContext : IDisposable
     /// <returns>
     /// An <see cref="IDisposable"/> that removes this match listener when disposed.
     /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="matchExpression"/> or <paramref name="handler"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The match identifier is already bound to a different payload type.
+    /// </exception>
+    [Obsolete(LegacyTypedApi.MatchSubscription, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     IDisposable Subscribe<TPayload>(MatchExpression<TPayload> matchExpression, Action<EventEnvelope<TPayload>> handler);
 
     /// <summary>
@@ -103,6 +145,13 @@ public interface IEventContext : IDisposable
     /// <returns>
     /// An <see cref="IDisposable"/> that removes this pending one-shot match listener when disposed.
     /// </returns>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="matchExpression"/> or <paramref name="handler"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The match identifier is already bound to a different payload type.
+    /// </exception>
+    [Obsolete(LegacyTypedApi.MatchSubscription, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     IDisposable SubscribeOnce<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>> handler
@@ -117,6 +166,13 @@ public interface IEventContext : IDisposable
     /// The specific listener to remove. When <see langword="null"/>, all regular and one-shot
     /// listeners for the match expression are removed.
     /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="matchExpression"/> is <see langword="null"/>.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The match identifier is already bound to a different payload type.
+    /// </exception>
+    [Obsolete(LegacyTypedApi.MatchSubscription, DiagnosticId = LegacyTypedApi.DiagnosticId)]
     void Unsubscribe<TPayload>(
         MatchExpression<TPayload> matchExpression,
         Action<EventEnvelope<TPayload>>? handler = null

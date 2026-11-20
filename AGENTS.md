@@ -2,7 +2,9 @@
 
 ## Project Structure & Module Organization
 
-This is a .NET 10 solution centered on `Eventa.slnx`. The `src/Eventa.csproj` project publishes the `Eventa` package, with core library code in `src/Eventa` and the System.Threading.Channels adapter in `src/Eventa.Adapters/Channels`. Tests share the `tests/Eventa.Tests.csproj` project and mirror that module layout under `tests`. `examples/Eventa.Example` is the console sample used to validate public API ergonomics. Design notes and RFCs belong in `docs`; generated build output belongs in `artifacts` and should not be edited by hand.
+This is a .NET 10 solution centered on `Eventa.slnx`. The `src/Eventa.csproj` project publishes the `Eventa` package, with core library code in `src/Eventa` and the System.Threading.Channels adapter in `src/Eventa.Adapters/Channels`. Tests share the `tests/Eventa.Tests.csproj` project and mirror that module layout under `tests`. `examples/Eventa.Example` is the console sample used to validate public API ergonomics. Design notes and RFCs belong in `docs`.
+
+Builds write to each project's `bin/` and `obj/` directories. The publish workflow writes NuGet packages to `artifacts/package/`. Treat these directories as generated output.
 
 ## Build, Test, and Development Commands
 
@@ -19,7 +21,16 @@ Restore first, build the full solution, then run the xUnit test project. This re
 
 ## Coding Style & Naming Conventions
 
-Follow `.editorconfig`: spaces only, 4-space indentation for C#, 2-space indentation for project/XML/JSON files. C# uses nullable reference types and implicit usings. Prefer explicit types over `var`, file-scoped namespaces, braces for blocks, sorted `System` usings first, and static local functions where practical. Public types, methods, and properties use PascalCase; interfaces use `I` + PascalCase; type parameters use `T` + PascalCase.
+Follow `.editorconfig`: spaces only, 4-space indentation for C#, 2-space indentation for project/XML/JSON files. C# uses nullable reference types and implicit usings. Prefer explicit types over `var`, file-scoped namespaces, sorted `System` usings first, and static local functions where practical. Public types, methods, and properties use PascalCase. Interfaces use `I` + PascalCase, and type parameters use `T` + PascalCase. Preserve the protocol's camelCase property names on `Eventa`, `IDeliveryLike`, and `Delivery`.
+
+An `if` with no `else` may go on one line without braces when it fits the configured line length and its body is a single jump statement of the form `return;`, `return` with a simple expression, `continue;`, or `break;`. Use braces for other control flow.
+
+```csharp
+if (requestCancellationToken.IsCancellationRequested) return;
+if (requestCancellationToken.IsCancellationRequested) return Task.CompletedTask;
+if (inQuotes) continue;
+if (item == target) break;
+```
 
 ## Testing Guidelines
 
