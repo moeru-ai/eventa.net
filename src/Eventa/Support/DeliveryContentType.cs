@@ -65,6 +65,9 @@ internal static class DeliveryContentType
     // Delivery retains the original string, including any delimiters omitted here.
     private static string? PrepareForParsing(string value)
     {
+        // A standalone media type begins with the type token.
+        if (value.Length == 0 || IsWhitespace(value[0])) return null;
+
         StringBuilder? parseInput = null;
         int segmentStart = 0;
         bool inQuotes = false;
@@ -88,6 +91,9 @@ internal static class DeliveryContentType
             }
 
             if (inQuotes) continue;
+
+            // The semicolon branch consumes any whitespace after an empty final parameter.
+            if (index == value.Length - 1 && IsWhitespace(character)) return null;
 
             // RFC 9110 does not allow whitespace around type/subtype or name=value separators.
             var hasWhitespaceBefore = index > 0 && IsWhitespace(value[index - 1]);

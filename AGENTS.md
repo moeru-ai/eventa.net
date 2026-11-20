@@ -23,12 +23,13 @@ Restore first, build the full solution, then run the xUnit test project. This re
 
 Follow `.editorconfig`: spaces only, 4-space indentation for C#, 2-space indentation for project/XML/JSON files. C# uses nullable reference types and implicit usings. Prefer explicit types over `var`, file-scoped namespaces, sorted `System` usings first, and static local functions where practical. Public types, methods, and properties use PascalCase. Interfaces use `I` + PascalCase, and type parameters use `T` + PascalCase. Preserve the protocol's camelCase property names on `Eventa`, `IDeliveryLike`, and `Delivery`.
 
-Write an `if` with no `else` and a single simple return or `continue;` on one line without braces when it fits the configured line length. Use braces for other control flow.
+An `if` with no `else` may go on one line without braces when it fits the configured line length and its body is a single jump statement of the form `return;`, `return` with a simple expression, `continue;`, or `break;`. Use braces for other control flow.
 
 ```csharp
 if (requestCancellationToken.IsCancellationRequested) return;
 if (requestCancellationToken.IsCancellationRequested) return Task.CompletedTask;
 if (inQuotes) continue;
+if (item == target) break;
 ```
 
 ## Testing Guidelines
