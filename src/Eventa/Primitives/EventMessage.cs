@@ -6,7 +6,7 @@ namespace Eventa;
 /// references them. Snapshot mutable or transient storage before retaining it. Local listeners and
 /// forwarded deliveries share the same references.
 /// </remarks>
-public sealed class Eventa
+public sealed class EventMessage
 {
     /// <summary>Gets the event identifier. Empty and whitespace identifiers are valid.</summary>
     public string id { get; }
@@ -20,7 +20,7 @@ public sealed class Eventa
     /// </param>
     /// <param name="body">The stable application value to retain, or <see langword="null"/>.</param>
     /// <exception cref="ArgumentNullException"><paramref name="id"/> is <see langword="null"/>.</exception>
-    public Eventa(string id, object? body = null)
+    public EventMessage(string id, object? body = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         this.id = id;

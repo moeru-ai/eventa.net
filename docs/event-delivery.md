@@ -14,7 +14,6 @@ Listeners match the event ID exactly, including case. A listener receives the su
 using System;
 using System.Threading.Tasks;
 using Eventa;
-using Event = global::Eventa.Eventa;
 
 const string eventId = "orders:created";
 using EventContext local = new();
@@ -32,7 +31,8 @@ using IDisposable nextSubscription = next.Subscribe(eventId, delivery =>
 });
 
 // Application-defined content type for a CLR string.
-Delivery original = Delivery.Create("application/vnd.example.order-text; model=clr", new Event(eventId, "Order 123"));
+Delivery original = Delivery.Create("application/vnd.example.order-text; model=clr",
+    new EventMessage(eventId, "Order 123"));
 IDeliveryTarget target = local;
 await target.AcceptAsync(original);
 await target.AcceptAsync(original); // Duplicate. The local listener runs only once.
@@ -41,7 +41,7 @@ await next.AcceptAsync(original.Forward());
 
 `Delivery.Create` generates a new delivery ID and starts with 32 hops. When you only
 need to publish locally, `EventContext.EmitAsync(contentType, eventa)` creates and submits
-a delivery for you. To submit an existing envelope, implement `IDeliveryLike` and pass
+a delivery for you. To submit an existing envelope, implement `IDeliveryData` and pass
 it to `Delivery.Restore`. Restore validates the routing fields and preserves their values.
 Your application chooses the target and can check its cancellation token before submission.
 

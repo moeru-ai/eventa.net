@@ -271,13 +271,13 @@ The unified early-abort contract and local resource policy are in [§4.5](#45-in
 
 This section defines the data model, responsibility boundaries, and observable behavior for Core and Invoke. Internal implementation choices and open interfaces are listed in §6.
 
-### 4.1 Delivery and Eventa model
+### 4.1 Delivery and EventMessage model
 
-Delivery carries routing information. Nested Eventa contains only an event ID and opaque body. These types and their structural view establish the model used by Core ingress and forwarding.
+Delivery carries routing information. The nested `EventMessage` contains only an event ID and opaque body. These types and their structural view establish the model used by Core ingress and forwarding.
 
 #### CLR type and identity
 
-`Delivery` is a non-generic, immutable, non-positional `sealed record class Delivery : IDeliveryLike`. It is a Core model, not a requirement that every Adapter serialize the CLR object directly. Each Adapter/profile owns framing and carrier representation. Keeping the basic nested TypeScript 1.0 shape reduces the cost of reading cross-language code, logs, and bridges.
+`Delivery` is a non-generic, immutable, non-positional `sealed record class Delivery : IDeliveryData`. It is a Core model, not a requirement that every Adapter serialize the CLR object directly. Each Adapter/profile owns framing and carrier representation. Keeping the basic nested TypeScript 1.0 shape reduces the cost of reading cross-language code, logs, and bridges.
 
 `sealed` prevents subtypes from adding state that changes Core semantics. Record value equality and harmless shallow copies are CLR conveniences. Next-hop envelopes must use the controlled `Forward()` construction path. Protocol identity is always `deliveryId`; duplicate suppression must not use record equality, a whole-object hash, or reference equality.
 
@@ -295,21 +295,21 @@ Delivery
     └── body
 ```
 
-Only protocol-facing members on Delivery, Eventa, and `IDeliveryLike` use camelCase: `contentType`, `deliveryId`, `hopsRemaining`, `eventa`, `id`, and `body`. Other CLR APIs, including `IDeliveryLike`, `EventDefinition<T>`, `SendAsync`, `CancellationToken`, and `Forward`, follow normal .NET naming.
+Only protocol-facing members on `Delivery`, `EventMessage`, and `IDeliveryData` use camelCase: `contentType`, `deliveryId`, `hopsRemaining`, `eventa`, `id`, and `body`. Other CLR APIs, including `IDeliveryData`, `EventDefinition<T>`, `SendAsync`, `CancellationToken`, and `Forward`, follow normal .NET naming.
 
-The fixed Eventa model contains only string `id` and `object? body`. `type`, `metadata`, `invokeMetadata`, and unknown properties stay outside Core; preservation is defined in [§4.6](#46-retained-carrier-representation-and-transparent-relay).
+The `EventMessage` model contains only string `id` and `object? body`. `type`, `metadata`, `invokeMetadata`, and unknown properties stay outside Core; preservation is defined in [§4.6](#46-retained-carrier-representation-and-transparent-relay).
 
-#### Eventa CLR type
+#### EventMessage CLR type
 
-Eventa is an ordinary sealed class with this constructor and these properties:
+`EventMessage` is an ordinary sealed class with this constructor and these properties:
 
 ```csharp
-public sealed class Eventa
+public sealed class EventMessage
 {
     public string id { get; }
     public object? body { get; }
 
-    public Eventa(string id, object? body = null)
+    public EventMessage(string id, object? body = null)
     {
         ArgumentNullException.ThrowIfNull(id);
 
@@ -321,23 +321,23 @@ public sealed class Eventa
 
 `id` rejects only null. Empty and whitespace-only strings are valid; do not use `ThrowIfNullOrWhiteSpace`. Omitting the body stores null.
 
-Eventa has no record equality, copy/`with` semantics, generic extension dictionary, or `JsonExtensionData`. Delivery construction, forwarding, and fan-out retain the same Eventa and body references.
+`EventMessage` has no record equality, copy/`with` semantics, generic extension dictionary, or `JsonExtensionData`. Delivery construction, forwarding, and fan-out retain the same event and body references.
 
-#### `IDeliveryLike` structural view
+#### `IDeliveryData` structural view
 
 Core exposes this minimal structural view:
 
 ```csharp
-public interface IDeliveryLike
+public interface IDeliveryData
 {
     string? contentType { get; }
     string? deliveryId { get; }
     int hopsRemaining { get; }
-    Eventa? eventa { get; }
+    EventMessage? eventa { get; }
 }
 ```
 
-`IDeliveryLike` means that a value has enough Delivery structure to attempt restoration; it does not mean an untrusted DTO. A decoded Adapter/profile carrier or compatibility-profile output can implement it directly. Core adds neither a `DeliveryLike` DTO class nor `IEventaLike`. Delivery implements the interface with non-null reference properties.
+`IDeliveryData` exposes the fields used to restore a Delivery. A decoded Adapter or profile carrier can implement it directly, and `Delivery` implements it with non-null reference properties. The interface is the only structural input type for `Restore`.
 
 Nullable reference members allow implementations to represent input that does not yet satisfy Core invariants. `hopsRemaining` is already an `int` at this boundary; the Adapter/profile decoder rejects fractional wire numbers and values outside `Int32`.
 
@@ -357,7 +357,7 @@ An inbound Adapter/profile decoder validates at least an outer object, non-empty
 
 `eventa.id` need not be non-empty or non-whitespace. Even an empty ID meets TypeScript 1.0.2's minimum contract. `eventa.body` is `object?`; Core does not check its business type, value domain, or property presence.
 
-`contentType` is a non-null string in Delivery and `string?` in `IDeliveryLike`. Core adds no Media Type value object or Eventa-specific wrapper.
+`contentType` is a non-null string in Delivery and `string?` in `IDeliveryData`. Core adds no Media Type value object or Eventa-specific wrapper.
 
 `Create` and `Restore` share Media Type syntax validation and preserve the exact valid input string without trimming or canonicalization.
 
@@ -368,20 +368,20 @@ String storage does not permit string-based protocol detection. `protocol=invoke
 The type, constant, properties, and constructor have this shape; the public construction methods are implemented on this type:
 
 ```csharp
-public sealed record class Delivery : IDeliveryLike
+public sealed record class Delivery : IDeliveryData
 {
     public const int DefaultHopsRemaining = 32;
 
     public string contentType { get; }
     public string deliveryId { get; }
     public int hopsRemaining { get; }
-    public Eventa eventa { get; }
+    public EventMessage eventa { get; }
 
     private Delivery(
         string contentType,
         string deliveryId,
         int hopsRemaining,
-        Eventa eventa)
+        EventMessage eventa)
     {
         this.contentType = contentType;
         this.deliveryId = deliveryId;
@@ -400,32 +400,32 @@ An empty `delivery with { }` is a valid shallow copy. It needs no special copy-c
 The public construction API is:
 
 ```csharp
-public static Delivery Create(string contentType, Eventa eventa)
-public static Delivery Restore(IDeliveryLike delivery)
+public static Delivery Create(string contentType, EventMessage eventa)
+public static Delivery Restore(IDeliveryData delivery)
 public Delivery Forward()
 ```
 
 #### `Create`: a new logical delivery
 
-`Create` validates a non-null Eventa and valid, non-null `contentType`, retains the same Eventa reference, generates a non-empty Nano ID with the existing dependency, and sets hops to `DefaultHopsRemaining` (32).
+`Create` validates a non-null `EventMessage` and valid, non-null `contentType`, retains the same event reference, generates a non-empty Nano ID with the existing dependency, and sets hops to `DefaultHopsRemaining` (32).
 
 The signature accepts neither a caller-selected delivery ID nor a hop budget. The exact Nano ID package call is an implementation detail. Do not add `IDeliveryIdGenerator`, generator DI for tests, or public Nano ID implementation types.
 
 #### `Restore`: an existing valid delivery
 
-`Restore` is the `IDeliveryLike → Delivery` invariant boundary. A null argument throws `ArgumentNullException`. An existing Delivery is returned unchanged, with no allocation or field generation.
+`Restore` is the `IDeliveryData → Delivery` invariant boundary. A null argument throws `ArgumentNullException`. An existing Delivery is returned unchanged, with no allocation or field generation.
 
-For another implementation, validate non-null, syntactically valid `contentType`; non-null `deliveryId` with `Length > 0`; `hopsRemaining >= 0`; and non-null Eventa. Whitespace-only delivery IDs are valid.
+For another implementation, validate non-null, syntactically valid `contentType`; non-null `deliveryId` with `Length > 0`; `hopsRemaining >= 0`; and non-null `EventMessage`. Whitespace-only delivery IDs are valid.
 
 Invalid members are construction-argument invariant violations and throw `ArgumentException`. P0 introduces no `InvalidDeliveryException`; exception message wording remains an implementation detail.
 
-Successful restoration preserves the exact content-type string, delivery-ID string, hop value, and Eventa/body references. It does not generate or trim IDs, reset or clamp hops, canonicalize content types, infer missing representations, fill values from `BinaryData.MediaType`, create or clone Eventa, or repair malformed input. The Eventa constructor already guarantees `id != null`; Restore need not validate it again.
+Successful restoration preserves the exact content-type string, delivery-ID string, hop value, and event and body references. It does not generate or trim IDs, reset or clamp hops, canonicalize content types, infer missing representations, fill values from `BinaryData.MediaType`, create or clone the event, or repair malformed input. The `EventMessage` constructor already guarantees `id != null`; Restore need not validate it again.
 
-Adapter/profile decoding and explicit compatibility profiles ultimately supply a complete `IDeliveryLike`. Restore does not interpret old TypeScript compatibility rules. A vanilla 1.0.2 frame without `contentType` requires an explicit profile mapping first.
+Adapter/profile decoding and explicit compatibility profiles ultimately supply a complete `IDeliveryData`. Restore does not interpret old TypeScript compatibility rules. A vanilla 1.0.2 frame without `contentType` requires an explicit profile mapping first.
 
 #### `Forward()`: a next-hop envelope
 
-`original.Forward()` returns a new Delivery, leaves the original unchanged, retains `deliveryId`, the exact `contentType` string, and the same Eventa/body references, and sets hops to `original.hopsRemaining - 1`.
+`original.Forward()` returns a new Delivery, leaves the original unchanged, retains `deliveryId`, the exact `contentType` string, and the same event and body references, and sets hops to `original.hopsRemaining - 1`.
 
 At zero hops it throws `InvalidOperationException`, although local dispatch is still allowed. There is no static `Delivery.Forward(delivery)`, `TryForward`, or `CanForward` API.
 
@@ -455,7 +455,7 @@ A retained body and its backing storage must remain valid and observably stable 
 
 BinaryData does not automatically copy supplied memory. Its byte-array and `ReadOnlyMemory<byte>` constructors, and `FromBytes`, wrap existing storage; `ToArray()` explicitly copies. Reusable network buffers, PipeReader data, ReadOnlySequence data, and pooled memory must be copied or otherwise stabilized before they become invalid. [Microsoft BinaryData](https://learn.microsoft.com/dotnet/api/system.binarydata?view=net-10.0-pp) [.NET 10 BinaryData source](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Memory.Data/src/System/BinaryData.cs)
 
-Local consumers, forwarding, and fan-out share the same stable Eventa/body references without per-branch copies. P0 introduces no IMemoryOwner, manual lease, reference counting, or pooled Delivery lifetime protocol. Detailed buffer, snapshot, and queue-lifetime rules are in [Research 4 §2.2–2.3](research-4-eventa-body-codec-boundary.md#22-object-and-binarydata).
+Local consumers, forwarding, and fan-out share the same stable event and body references without per-branch copies. P0 introduces no IMemoryOwner, manual lease, reference counting, or pooled Delivery lifetime protocol. Detailed buffer, snapshot, and queue-lifetime rules are in [Research 4 §2.2–2.3](research-4-eventa-body-codec-boundary.md#22-object-and-binarydata).
 
 #### Missing and null
 
@@ -474,7 +474,7 @@ Adapter/profile
     ↓
 framing / size / trust / envelope / ownership validation
     ↓
-IDeliveryLike
+IDeliveryData
     ↓
 Delivery.Restore(...)
     ↓
@@ -493,7 +493,7 @@ selected endpoint/listener
 optional typed decode
 ```
 
-Inbound Adapter/profile responsibilities end with carrier/framing, resource/size/trust validation, envelope decoding, and transient-memory stabilization. They provide `IDeliveryLike`, establish a valid opaque Delivery with Restore, and hand it to Application. Retained-carrier handoff is defined in [§4.6](#46-retained-carrier-representation-and-transparent-relay). An Adapter does not select EventContext, depend on or call the Core target directly, inject Core, choose drop/local/relay/fan-out policy, call Forward, or convert representations.
+Inbound Adapter/profile responsibilities end with carrier/framing, resource/size/trust validation, envelope decoding, and transient-memory stabilization. They provide `IDeliveryData`, establish a valid opaque Delivery with Restore, and hand it to Application. Retained-carrier handoff is defined in [§4.6](#46-retained-carrier-representation-and-transparent-relay). An Adapter does not select EventContext, depend on or call the Core target directly, inject Core, choose drop/local/relay/fan-out policy, call Forward, or convert representations.
 
 Application makes opaque-envelope decisions: drop, local target, relay/fan-out, and outbound representation policy. It may explicitly convert outbound or relay branches. For local consumption it must not decode or materialize business payloads before Core deduplication/routing. A local branch can retain a CLR object while Application builds JSON BinaryData for WebSocket. The typed boundary is in [§4.4](#44-typed-helper-boundary).
 
@@ -510,7 +510,7 @@ public interface IDeliveryTarget
 }
 ```
 
-`AcceptAsync` submits an already-valid Delivery to the current Core/EventContext for deduplication, local routing, and dispatch. Its main caller is Application orchestration. It accepts neither `IDeliveryLike` nor retained carrier state; Restore has already validated the nullable structural view.
+`AcceptAsync` submits an already-valid Delivery to the current Core/EventContext for deduplication, local routing, and dispatch. Its main caller is Application orchestration. It accepts neither `IDeliveryData` nor retained carrier state; Restore has already validated the nullable structural view.
 
 An EventContext implementation provides two parallel capabilities: `IEventContext` for application-facing emit/subscribe/lifecycle, and `IDeliveryTarget` for existing-Delivery ingress. `IEventContext` does not inherit the target interface, so ordinary event consumers do not automatically receive raw injection capability.
 
@@ -526,7 +526,7 @@ Treating caller cancellation as cancellation of the whole Delivery after pre-dis
 
 A local .NET target performs duplicate suppression, routing, and dispatch without calling Forward or decrementing hops. This explicitly separates TypeScript's internal continuation bookkeeping into local acceptance at the current node and Application-controlled next-hop derivation. Only deriving a forwarding branch consumes a hop; the public API need not copy TypeScript's internal accept.
 
-The same inbound Delivery can be submitted unchanged to a local target while Application independently derives relay branches from the original. Local consumption does not change the branch's starting budget. Hop 0 still allows local acceptance/dispatch. Construction and exhaustion rules are in [§4.1](#41-delivery-and-eventa-model); Adapter admission/send also leaves hops unchanged.
+The same inbound Delivery can be submitted unchanged to a local target while Application independently derives relay branches from the original. Local consumption does not change the branch's starting budget. Hop 0 still allows local acceptance/dispatch. Construction and exhaustion rules are in [§4.1](#41-delivery-and-eventmessage-model); Adapter admission/send also leaves hops unchanged.
 
 #### Recent-delivery history
 
@@ -590,7 +590,7 @@ There is one body representation:
 
 - `contentType` describes the complete Invoke body.
 - Invoke reads control fields and uses event IDs to distinguish send/error/stream-end/abort/receive frames.
-- `content` is an application/platform value inside that representation, with no nested Eventa content type.
+- `content` is an application/platform value inside that representation, with no nested event content type.
 - A CLR runtime body can hold a CLR Content object; a JSON body holds a JSON `content` value.
 - Application owns representation conversion. Generic routing does not interpret Invoke mismatches.
 
@@ -690,9 +690,9 @@ Research 4 covers JSON errors, abort reasons, business-content codecs, and physi
 
 #### Fixed Core model and profile fields
 
-The fixed Delivery/Eventa model has no Extensions dictionary, JsonExtensionData, or generic unknown-field storage. Local creation emits neither of these two groups:
+The fixed `Delivery` and `EventMessage` model has no Extensions dictionary, JsonExtensionData, or generic unknown-field storage. Local creation emits neither of these two groups:
 
-- Known non-Core Eventa properties: TypeScript runtime `type`, `metadata`, and `invokeMetadata`. Excluding them from C# Core does not make them private Adapter fields.
+- The TypeScript `Eventa` properties `type`, `metadata`, and `invokeMetadata` stay outside C# Core. Excluding them from C# Core does not make them private Adapter fields.
 - Unknown or Adapter/profile/host-specific extras: unknown properties, beta.13 aliases, timestamp wrappers, Worker transferables, window-message wrappers, Electron/Tauri host information, and remote-method stubs.
 
 Internal platform metadata can remain self-consistent without reproducing TypeScript's local structures.
@@ -814,7 +814,7 @@ The Core/Application/Adapter boundary depends only on these architecture contrac
 
 Implement in this dependency order, using §4 as the canonical behavior contract:
 
-1. Delivery/Eventa model and Create/Restore (§4.1).
+1. Delivery and EventMessage model and Create/Restore (§4.1).
 2. Core ingress, local routing, listener dispatch/completion (§4.3).
 3. deliveryId and bounded recent history (§4.3).
 4. hopsRemaining and Forward (§4.1, §4.3).
@@ -879,23 +879,23 @@ Decide whether to expose a raw-relay gateway API or retain internal composition 
 
 These assertions follow §4. Core tests do not depend on concrete Adapters. Profile, relay, and helper tests run only when those features are implemented.
 
-### 7.1 Eventa and Delivery construction
+### 7.1 EventMessage and Delivery construction
 
-See [§4.1](#41-delivery-and-eventa-model).
+See [§4.1](#41-delivery-and-eventmessage-model).
 
-1. Eventa is an ordinary sealed class with get-only id/body and `Eventa(string id, object? body = null)`. Null ID throws ArgumentNullException; empty/whitespace IDs are valid; omitted body is null. There is no metadata/extension storage, record equality, or with semantics.
-2. Delivery is a non-positional sealed record implementing IDeliveryLike, with private constructor, public DefaultHopsRemaining = 32, get-only protocol properties, and the settled signatures. Initializers or field-changing with expressions cannot bypass invariants. Empty with copies remain valid and share references/identity.
-3. Create generates a non-empty Nano ID, defaults hops, and preserves Eventa/body references. Callers cannot choose ID/hops. Null Eventa and null/invalid contentType are rejected; tests add no generator DI.
-4. Restore preserves values/references from any valid IDeliveryLike and returns an existing Delivery unchanged. Null argument throws ArgumentNullException; invalid members throw ArgumentException. Whitespace delivery IDs and empty/whitespace event IDs remain valid.
-5. Restore does not generate/trim IDs, reset/clamp hops, canonicalize contentType, infer representation from body metadata, create/clone Eventa, or repair input. It need not repeat the Eventa constructor's non-null ID check.
-6. Create/Restore share Media Type validation and preserve exact valid strings. Fractional/out-of-Int32 wire hops are decoder tests, not inputs expressible by IDeliveryLike.
+1. `EventMessage` is an ordinary sealed class with get-only id/body and `EventMessage(string id, object? body = null)`. Null ID throws ArgumentNullException; empty/whitespace IDs are valid; omitted body is null. There is no metadata/extension storage, record equality, or with semantics.
+2. Delivery is a non-positional sealed record implementing IDeliveryData, with private constructor, public DefaultHopsRemaining = 32, get-only protocol properties, and the settled signatures. Initializers or field-changing with expressions cannot bypass invariants. Empty with copies remain valid and share references/identity.
+3. Create generates a non-empty Nano ID, defaults hops, and preserves event and body references. Callers cannot choose ID/hops. Null events and null/invalid contentType are rejected; tests add no generator DI.
+4. Restore preserves values/references from any valid IDeliveryData and returns an existing Delivery unchanged. Null argument throws ArgumentNullException; invalid members throw ArgumentException. Whitespace delivery IDs and empty/whitespace event IDs remain valid.
+5. Restore does not generate/trim IDs, reset/clamp hops, canonicalize contentType, infer representation from body metadata, create/clone the event, or repair input. It need not repeat the `EventMessage` constructor's non-null ID check.
+6. Create/Restore share Media Type validation and preserve exact valid strings. Fractional/out-of-Int32 wire hops are decoder tests, not inputs expressible by IDeliveryData.
 
 ### 7.2 Core ingress and Application composition
 
 See [§4.3](#43-core-ingress-deduplication-and-listener-completion).
 
 1. Ingress is exactly `Task AcceptAsync(Delivery delivery)`, not ValueTask, with no caller-token parameter/overload. EventContext implements parallel IEventContext/IDeliveryTarget capabilities without inheritance between them.
-2. Targets accept only Core-valid Delivery, not IDeliveryLike or retained state. Restore owns structural validation.
+2. Targets accept only Core-valid Delivery, not IDeliveryData or retained state. Restore owns structural validation.
 3. After framing/size/trust/envelope/ownership validation and Restore, Adapters hand data to Application without calling a target, selecting a Context, or injecting Core.
 4. Application may check a token before submission. Submission then follows Core semantics without caller-token withdrawal; Context lifetime cannot roll back seen. Tests require no new lifetime API.
 5. Application selects targets/drop/relay/fan-out/conversion; user-owned P0 glue code needs no central facade/runtime.
@@ -931,7 +931,7 @@ See §4.3.
 
 See §4.1 and §4.3.
 
-1. Forward returns a new Delivery, leaves the original unchanged, decrements exactly once, and preserves ID, exact contentType, and Eventa/body references.
+1. Forward returns a new Delivery, leaves the original unchanged, decrements exactly once, and preserves the ID and exact contentType and shares the event and body references.
 2. Fan-out branches derive independently from the same original; only chained forwarding decrements repeatedly.
 3. Local acceptance/dispatch and Adapter admission/send neither decrement hops nor create implicit next-hop continuations. Local-consumption order does not change a relay branch's starting budget.
 4. Hop 0 allows local dispatch; Forward throws InvalidOperationException. No static forwarding overload, TryForward, or CanForward is added.

@@ -4,7 +4,7 @@ internal sealed record DeliveryInput(
     string? contentType,
     string? deliveryId,
     int hopsRemaining,
-    Eventa? eventa) : IDeliveryLike;
+    EventMessage? eventa) : IDeliveryData;
 
 internal sealed class ManualDeliveryTime : TimeProvider
 {

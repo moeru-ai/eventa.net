@@ -5,7 +5,7 @@ internal static class LegacyTypedApi
 {
     internal const string DiagnosticId = "EVENTA001";
 
-    internal const string Envelope = "Use Eventa and Delivery for new event routing.";
+    internal const string Envelope = "Use EventMessage and Delivery for new event routing.";
     internal const string Emit = "Use EventContext.EmitAsync for new local events.";
     internal const string EmitWithOptions =
         "Use EventContext.EmitAsync for local events and pass transport options to the transport separately.";

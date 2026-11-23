@@ -8,29 +8,29 @@ public sealed class DeliveryTests
     [InlineData("")]
     [InlineData(" \t")]
     [InlineData("orders:created")]
-    public void Eventa_WithNonNullId_PreservesIdAndOpaqueBody(string id)
+    public void EventMessage_WithNonNullId_PreservesIdAndOpaqueBody(string id)
     {
         object body = new();
-        Eventa eventa = new(id, body);
+        EventMessage eventa = new(id, body);
         Assert.Same(id, eventa.id);
         Assert.Same(body, eventa.body);
-        Assert.Null(new Eventa(id).body);
-        Assert.NotEqual(eventa, new Eventa(id, body));
-        Assert.Throws<ArgumentNullException>(() => new Eventa(null!));
+        Assert.Null(new EventMessage(id).body);
+        Assert.NotEqual(eventa, new EventMessage(id, body));
+        Assert.Throws<ArgumentNullException>(() => new EventMessage(null!));
     }
 
     [Fact]
     public void PublicModel_WhenInspected_ExposesOnlyGetOnlyProtocolProperties()
     {
-        Assert.True(typeof(Eventa).IsSealed);
+        Assert.True(typeof(EventMessage).IsSealed);
         Assert.True(typeof(Delivery).IsSealed);
         Assert.Empty(typeof(Delivery).GetConstructors());
-        Assert.Equal(["body", "id"], ProtocolProperties(typeof(Eventa)));
+        Assert.Equal(["body", "id"], ProtocolProperties(typeof(EventMessage)));
         Assert.Equal(["contentType", "deliveryId", "eventa", "hopsRemaining"], ProtocolProperties(typeof(Delivery)));
         Assert.All(typeof(Delivery).GetProperties(), property => Assert.Null(property.SetMethod));
-        Assert.All(typeof(Eventa).GetProperties(), property => Assert.Null(property.SetMethod));
-        Assert.Null(typeof(Eventa).GetMethod("<Clone>$"));
-        Assert.True(typeof(IDeliveryLike).IsAssignableFrom(typeof(Delivery)));
+        Assert.All(typeof(EventMessage).GetProperties(), property => Assert.Null(property.SetMethod));
+        Assert.Null(typeof(EventMessage).GetMethod("<Clone>$"));
+        Assert.True(typeof(IDeliveryData).IsAssignableFrom(typeof(Delivery)));
     }
 
     [Fact]
@@ -38,7 +38,7 @@ public sealed class DeliveryTests
     {
         const string contentType = "Application/Example; model=CLR";
         object body = new();
-        Eventa eventa = new("", body);
+        EventMessage eventa = new("", body);
         Delivery delivery = Delivery.Create(contentType, eventa);
         Assert.False(string.IsNullOrEmpty(delivery.deliveryId));
         Assert.NotEqual(delivery.deliveryId, Delivery.Create(contentType, eventa).deliveryId);
@@ -59,7 +59,7 @@ public sealed class DeliveryTests
     {
         const string contentType = "Application/Example; FORMAT=\"original\";model=clr";
         const string id = " \t";
-        Eventa eventa = new(eventId, new object());
+        EventMessage eventa = new(eventId, new object());
         Delivery delivery = Delivery.Restore(new DeliveryInput(contentType, id, hops, eventa));
         Assert.Same(contentType, delivery.contentType);
         Assert.Same(id, delivery.deliveryId);
@@ -77,7 +77,7 @@ public sealed class DeliveryTests
     [Fact]
     public void Restore_WithInvalidMembers_RejectsWithoutRepair()
     {
-        Eventa eventa = new("event");
+        EventMessage eventa = new("event");
         DeliveryInput valid = new("application/example", "id", 2, eventa);
         DeliveryInput[] invalid =
         [
@@ -102,7 +102,7 @@ public sealed class DeliveryTests
     public void Forward_WithPositiveHopBudget_DerivesIndependentBranchesAndPreservesReferences(int hops)
     {
         Delivery original = Delivery.Restore(new DeliveryInput("Application/Example;x=\"X\"", "id", hops,
-            new Eventa("event", new object())));
+            new EventMessage("event", new object())));
         Delivery left = original.Forward();
         Delivery right = original.Forward();
         Assert.NotSame(original, left);

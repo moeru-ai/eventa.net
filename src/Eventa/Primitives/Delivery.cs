@@ -5,7 +5,7 @@ namespace Eventa;
 /// The content type describes the body representation. The envelope retains the original event and
 /// body by reference. Applications that relay a transport message can retain its carrier separately.
 /// </remarks>
-public sealed record class Delivery : IDeliveryLike
+public sealed record class Delivery : IDeliveryData
 {
     /// <summary>The forwarding budget for a newly created delivery.</summary>
     public const int DefaultHopsRemaining = 32;
@@ -20,9 +20,9 @@ public sealed record class Delivery : IDeliveryLike
     public int hopsRemaining { get; }
 
     /// <inheritdoc />
-    public Eventa eventa { get; }
+    public EventMessage eventa { get; }
 
-    private Delivery(string contentType, string deliveryId, int hopsRemaining, Eventa eventa)
+    private Delivery(string contentType, string deliveryId, int hopsRemaining, EventMessage eventa)
     {
         this.contentType = contentType;
         this.deliveryId = deliveryId;
@@ -38,7 +38,7 @@ public sealed record class Delivery : IDeliveryLike
     /// </returns>
     /// <exception cref="ArgumentNullException">Either argument is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="contentType"/> is not a valid media type.</exception>
-    public static Delivery Create(string contentType, Eventa eventa)
+    public static Delivery Create(string contentType, EventMessage eventa)
     {
         ArgumentNullException.ThrowIfNull(eventa);
         ArgumentNullException.ThrowIfNull(contentType);
@@ -58,7 +58,7 @@ public sealed record class Delivery : IDeliveryLike
     /// The input has a missing or invalid content type, a null or empty delivery ID, a negative hop budget,
     /// or a null event.
     /// </exception>
-    public static Delivery Restore(IDeliveryLike delivery)
+    public static Delivery Restore(IDeliveryData delivery)
     {
         ArgumentNullException.ThrowIfNull(delivery);
         if (delivery is Delivery valid) return valid;
@@ -67,7 +67,7 @@ public sealed record class Delivery : IDeliveryLike
         string? contentType = delivery.contentType;
         string? deliveryId = delivery.deliveryId;
         int hopsRemaining = delivery.hopsRemaining;
-        Eventa? eventa = delivery.eventa;
+        EventMessage? eventa = delivery.eventa;
         if (contentType is null || !DeliveryContentType.IsValid(contentType)
             || string.IsNullOrEmpty(deliveryId) || hopsRemaining < 0 || eventa is null)
         {

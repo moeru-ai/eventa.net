@@ -15,7 +15,7 @@ public sealed class DeliveryContentTypeTests
     [InlineData("x!#$%&'*+-.^_`|~/example")]
     public void Construction_WithValidMediaType_PreservesExactInput(string value)
     {
-        Eventa eventa = new("event");
+        EventMessage eventa = new("event");
         Assert.Same(value, Delivery.Create(value, eventa).contentType);
         Assert.Same(value, Delivery.Restore(new DeliveryInput(value, "id", 1, eventa)).contentType);
     }
@@ -53,7 +53,7 @@ public sealed class DeliveryContentTypeTests
     [InlineData("application/example; key=\"中\"")]
     public void Construction_WithInvalidMediaType_RejectsInCreateAndRestore(string value)
     {
-        Eventa eventa = new("event");
+        EventMessage eventa = new("event");
         Assert.Throws<ArgumentException>(() => Delivery.Create(value, eventa));
         Assert.Throws<ArgumentException>(() => Delivery.Restore(new DeliveryInput(value, "id", 1, eventa)));
     }

@@ -391,8 +391,8 @@ dotnet_naming_style.s_camelcase.word_separator =
 dotnet_naming_style.s_camelcase.capitalization = camel_case
 
 # Core protocol properties intentionally retain their camelCase names.
-[src/Eventa/Abstractions/IDeliveryLike.cs]
+[src/Eventa/Abstractions/IDeliveryData.cs]
 dotnet_diagnostic.IDE1006.severity = none
 
-[src/Eventa/Primitives/Eventa.cs]
+[src/Eventa/Primitives/EventMessage.cs]
 dotnet_diagnostic.IDE1006.severity = none

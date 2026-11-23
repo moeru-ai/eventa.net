@@ -17,7 +17,7 @@ public sealed partial class EventContext
     /// <returns>A task that follows the listener completion rules of <see cref="AcceptAsync"/>.</returns>
     /// <exception cref="ArgumentNullException">Either argument is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="contentType"/> is not a valid media type.</exception>
-    public Task EmitAsync(string contentType, Eventa eventa)
+    public Task EmitAsync(string contentType, EventMessage eventa)
     {
         return AcceptAsync(Delivery.Create(contentType, eventa));
     }
@@ -29,7 +29,7 @@ public sealed partial class EventContext
     /// <param name="handler">The callback that receives the delivery and returns a non-null task.</param>
     /// <returns>A subscription that removes this listener when disposed.</returns>
     /// <remarks>
-    /// The callback receives the original Delivery, Eventa, and body references. Optional business
+    /// The callback receives the original delivery, event, and body references. Optional business
     /// decoding belongs here, after deduplication and routing. Disposing the subscription only affects
     /// future listener selection. Callbacks already selected for dispatch can still run.
     /// </remarks>

@@ -45,7 +45,7 @@ internal static class Program
             return Task.CompletedTask;
         });
 
-        Delivery original = Delivery.Create("application/example", new Eventa.Eventa(
+        Delivery original = Delivery.Create("application/example", new EventMessage(
             "example:delivery", new MovePayload(10, 20)));
         EventContext target = local;
         await target.AcceptAsync(original);

@@ -87,15 +87,15 @@ Delivery
     └── body
 ```
 
-Delivery is a non-generic, non-positional, immutable sealed record implementing IDeliveryLike. Private construction and get-only properties protect routing invariants. Eventa is an ordinary sealed class with `Eventa(string id, object? body = null)` and only get-only id/body. IDs reject null but allow empty/whitespace strings. Core has no generic extension storage, and only protocol-facing members use camelCase.
+Delivery is a non-generic, non-positional, immutable sealed record implementing IDeliveryData. Private construction and get-only properties protect routing invariants. `EventMessage` is an ordinary sealed class with `EventMessage(string id, object? body = null)` and only get-only id/body. IDs reject null but allow empty/whitespace strings. Core has no generic extension storage, and only protocol-facing members use camelCase.
 
-IDeliveryLike exposes string? contentType, string? deliveryId, int hopsRemaining, and Eventa? eventa. A decoded carrier/profile can implement it directly. Restore validates invariants; Create generates a new ID and defaults hops to 32. Full signatures, validation, and reference-sharing rules are in [Research 3 §4.1](research-3-eventa-typescript-1.0.2-compatibility.md#41-delivery-and-eventa-model).
+`IDeliveryData` exposes `string? contentType`, `string? deliveryId`, `int hopsRemaining`, and `EventMessage? eventa`. A decoded carrier/profile can implement it directly. Restore validates invariants; Create generates a new ID and defaults hops to 32. Full signatures, validation, and reference-sharing rules are in [Research 3 §4.1](research-3-eventa-typescript-1.0.2-compatibility.md#41-delivery-and-eventmessage-model).
 
-Vanilla TypeScript 1.0.2 lacks authoritative contentType and cannot Restore directly. An explicit compatibility profile must establish representation, construct contentType, map Invoke markers, and supply IDeliveryLike. Core guesses no default, and Restore neither understands nor repairs the old protocol. Profiles still own framing and carriers; the CLR model is not necessarily the final wire object.
+Vanilla TypeScript 1.0.2 lacks authoritative contentType and cannot Restore directly. An explicit compatibility profile must establish representation, construct contentType, map Invoke markers, and supply IDeliveryData. Core guesses no default, and Restore neither understands nor repairs the old protocol. Profiles still own framing and carriers; the CLR model is not necessarily the final wire object.
 
 Core interprets delivery identity, hop budget, and event identity. contentType describes the complete body representation; carrying it does not require decoding that body. It neither identifies application CLR types nor replaces event ID/application contracts.
 
-Delivery stores contentType as a non-null string; IDeliveryLike uses string?. There is no Media Type wrapper/value object. Create and Restore share syntax validation and preserve valid strings without canonicalization. Semantic parameter lookup still requires a real parser, not substrings, fixed parameter order, or full-string equality. Parser/helper selection remains an implementation choice.
+Delivery stores contentType as a non-null string; IDeliveryData uses string?. There is no Media Type wrapper/value object. Create and Restore share syntax validation and preserve valid strings without canonicalization. Semantic parameter lookup still requires a real parser, not substrings, fixed parameter order, or full-string equality. Parser/helper selection remains an implementation choice.
 
 Media Types follow RFC 9110's type/subtype plus optional semicolon-separated name/value parameters. Type, subtype, and parameter names are case-insensitive. RFC 6838 states that order is insignificant and duplicate parameter names are errors; value syntax and meaning belong to the media type/profile. [RFC 9110 §8.3.1](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.3.1) [RFC 6838 §4.3](https://www.rfc-editor.org/rfc/rfc6838.html#section-4.3)
 
@@ -120,7 +120,7 @@ P0 uses stable GC-managed lifetimes: body and storage remain valid whenever any 
 
 BinaryData(byte[]), BinaryData(`ReadOnlyMemory<byte>`), and FromBytes wrap memory without copying. Adapters must copy or explicitly stabilize PipeReader, reusable socket, pooled, or borrowed data before invalidation/return. ToArray creates an independent array when ownership is uncertain; ToMemory does not. [.NET 10 `BinaryData` constructors](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Memory.Data/src/System/BinaryData.cs#L48-L178) [`ToMemory` / `ToArray`](https://github.com/dotnet/runtime/blob/v10.0.0/src/libraries/System.Memory.Data/src/System/BinaryData.cs#L393-L407)
 
-Private construction and get-only fields prevent invariant-breaking initializers/with modifications; empty with copies remain valid. Create retains the supplied Eventa reference. Restore retains inbound Eventa/body and returns an existing Delivery directly. Neither object? nor `ReadOnlyMemory<byte>` implies deep immutability. Producers and consumers must not change observable body content after retention; snapshot first if needed. Once stable, local consumers, typed decoders, and outbound branches share Eventa/body without per-branch fan-out copies.
+Private construction and get-only fields prevent invariant-breaking initializers/with modifications; empty with copies remain valid. Create retains the supplied event reference. Restore retains the inbound event and body by reference and returns an existing Delivery directly. Neither object? nor `ReadOnlyMemory<byte>` implies deep immutability. Producers and consumers must not change observable body content after retention; snapshot first if needed. Once stable, local consumers, typed decoders, and outbound branches share the event and body without per-branch fan-out copies.
 
 ### 2.4 Application and Adapter orchestration
 
@@ -138,7 +138,7 @@ Outbound flow:
 Inbound flow:
 
 1. Adapter/profile handles framing and validates frame size, trust, envelope, and ownership.
-2. Given valid contentType, or one explicitly established by a compatibility profile, it supplies IDeliveryLike and uses Restore to establish a Core-valid opaque Delivery. Restore does not repair old protocol rules or invalid/missing members. Relay profiles retain the original carrier or profile-native state preserving untouched representation, alongside the Delivery projection.
+2. Given valid contentType, or one explicitly established by a compatibility profile, it supplies IDeliveryData and uses Restore to establish a Core-valid opaque Delivery. Restore does not repair old protocol rules or invalid/missing members. Relay profiles retain the original carrier or profile-native state preserving untouched representation, alongside the Delivery projection.
 3. Application selects local targets, drop, relay/fan-out, and outbound representation policy at opaque-envelope level. Local consumption must not require or trigger early business-payload materialization.
 4. Application submits the original Delivery to a local target for deliveryId deduplication and routing/dispatch, preserving hops.
 5. Only the selected application-owned typed endpoint/listener chooses a contract and decodes through its helper.
@@ -152,7 +152,7 @@ public interface IDeliveryTarget
 }
 ```
 
-It accepts Core-valid Delivery, not IDeliveryLike or retained state. EventContext offers IEventContext's application API and IDeliveryTarget's existing-Delivery ingress as parallel capabilities without inheritance.
+It accepts Core-valid Delivery, not IDeliveryData or retained state. EventContext offers IEventContext's application API and IDeliveryTarget's existing-Delivery ingress as parallel capabilities without inheritance.
 
 AcceptAsync has no caller-supplied CancellationToken. Application may check its own token before submitting; afterward Core deduplication/dispatch applies. Context lifetime is separate and cannot roll back seen. Typed/Invoke APIs may still use their own tokens.
 
@@ -170,7 +170,7 @@ For example, Application can retain CLR objects locally while building JSON Bina
 
 ### 2.5 Forwarding semantics
 
-`original.Forward()` is the public instance method `Delivery Forward()`. It creates a new Delivery, leaves the original unchanged, retains the exact deliveryId/contentType and Eventa/body references, and decrements hops once. Branches derive independently: from hop 10, both A and B get 9, not 9 and 8.
+`original.Forward()` is the public instance method `Delivery Forward()`. It creates a new Delivery, leaves the original unchanged, preserves `deliveryId` and `contentType`, shares the event and body references, and decrements hops once. Branches derive independently: from hop 10, both A and B get 9, not 9 and 8.
 
 Hop 0 still permits local dispatch; Forward throws InvalidOperationException. There is no TryForward or CanForward. The method only derives an envelope; Application selects forwarding, targets, Adapters, and sends. Admission/send does not consume hops or bypass controlled construction.
 
@@ -182,7 +182,7 @@ The complete encoded Invoke body may be stored in BinaryData. It remains opaque 
 
 The helper sits above Core and below typed application contracts. Only semantic `protocol=invoke` enables interpretation of invokeId/isReqStream/content/error wrappers and event-ID classification into send/error/stream-end/abort/receive. With no protocol parameter it is an ordinary event.
 
-One contentType describes the complete body. Content has no second Eventa content type; application contracts handle business conversion within the selected representation. InvokeEventType does not become a new cross-language wire requirement because protocol=invoke and event ID identify the protocol. TypeScript can keep its internal enum without C# copying its numeric values.
+One contentType describes the complete body. Content has no second event content type; application contracts handle business conversion within the selected representation. InvokeEventType does not become a new cross-language wire requirement because protocol=invoke and event ID identify the protocol. TypeScript can keep its internal enum without C# copying its numeric values.
 
 Invoke parses only its control structure, not business codec/schema/target policy, and does not call typed helpers implicitly. Application or application-owned endpoints make those calls.
 
@@ -290,7 +290,7 @@ Full construction, ingress, recent-history, and listener-completion cases are in
 
 1. Unknown events route through IDeliveryTarget without registry, JsonTypeInfo, or codec delegates. Core requires no typed materialization or universal missing/null meaning. A registry may share Context lifetime while remaining externally owned.
 2. Decode follows atomic recent-seen registration and routing. Failure does not roll back seen. A retained duplicate succeeds without helper calls, extra codec errors, waiting for the first operation, or inheriting its outcome. Expired/evicted entries follow the recent-history contract.
-3. Targets accept only valid Delivery, not IDeliveryLike or retained state. IEventContext does not inherit IDeliveryTarget; Restore validates invariants and profile carriers retain representation outside Core.
+3. Targets accept only valid Delivery, not IDeliveryData or retained state. IEventContext does not inherit IDeliveryTarget; Restore validates invariants and profile carriers retain representation outside Core.
 4. Vanilla TypeScript 1.0.2 needs an explicit contentType profile. Profile tests cover representation, Media Type construction, Invoke mapping, and promised preservation.
 5. Missing/different BinaryData.MediaType cannot change interpretation. Local acceptance preserves hops; Forward only derives an envelope and shares stable references without target/Adapter orchestration.
 
@@ -343,7 +343,7 @@ Core uses object? and BinaryData for encoded representation. A public raw-relay 
 
 ### Physical layout of Invoke control and application content
 
-The JSON helper retains `{ invokeId, content, isReqStream? }`. Implementations may read fields on demand from complete BinaryData or create parsed control views. Both use one Delivery contentType without nested Eventa representation metadata.
+The JSON helper retains `{ invokeId, content, isReqStream? }`. Implementations may read fields on demand from complete BinaryData or create parsed control views. Both use one Delivery contentType without nested event representation metadata.
 
 ### Publishing Media Type profiles
 

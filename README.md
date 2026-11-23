@@ -97,7 +97,7 @@ These typed-envelope APIs are marked `[Obsolete]` with compiler warning
 - **Typed envelopes and dispatch overloads.** `IEventEnvelope`,
   `EventEnvelope<TPayload>`, and the current generic `Emit`, `Subscribe`,
   `SubscribeOnce`, and `Unsubscribe` overloads, including match-expression
-  overloads. For new local routing, use `Eventa` and `Delivery` with
+  overloads. For new local routing, use `EventMessage` and `Delivery` with
   `EventContext.EmitAsync` or `IDeliveryTarget.AcceptAsync`. Subscribe by
   event ID with `EventContext.Subscribe(string, Func<Delivery, Task>)`.
   Use the current typed overloads where you need one-shot or match-expression

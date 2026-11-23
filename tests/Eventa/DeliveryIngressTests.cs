@@ -22,7 +22,7 @@ public sealed class DeliveryIngressTests
     public async Task AcceptAsync_WithCaseSensitiveEventIds_RoutesAndPreservesReferences()
     {
         using EventContext context = EventContext.Create();
-        Eventa eventa = new("unknown:event", new object());
+        EventMessage eventa = new("unknown:event", new object());
         Delivery delivery = Delivery.Create("application/unknown", eventa);
         List<Delivery> received = [];
         using IDisposable first = context.Subscribe(eventa.id, item =>
@@ -53,7 +53,7 @@ public sealed class DeliveryIngressTests
     public async Task EmitAsync_WithEmptyOrWhitespaceEventId_RoutesLocally(string eventId)
     {
         using EventContext context = new();
-        Eventa eventa = new(eventId, new object());
+        EventMessage eventa = new(eventId, new object());
         Delivery? received = null;
         using IDisposable registration = context.Subscribe(eventId, item =>
         {
@@ -78,13 +78,13 @@ public sealed class DeliveryIngressTests
         {
             count++;
             using IDisposable nested = context.Subscribe("other", _ => Task.CompletedTask);
-            return context.EmitAsync("application/example", new Eventa("other"));
+            return context.EmitAsync("application/example", new EventMessage("other"));
         });
         registration.Dispose();
-        await context.EmitAsync("application/example", new Eventa("event"));
+        await context.EmitAsync("application/example", new EventMessage("event"));
         Assert.Equal(1, count);
         context.Dispose();
-        await context.EmitAsync("application/example", new Eventa("event"));
+        await context.EmitAsync("application/example", new EventMessage("event"));
         Assert.Equal(1, count);
     }
 
@@ -276,7 +276,7 @@ public sealed class DeliveryIngressTests
             throw new InvalidOperationException("must not route"));
         Task first = context.AcceptAsync(original);
         Delivery changed = Delivery.Restore(new DeliveryInput(
-            "text/plain", original.deliveryId, 0, new Eventa("different", 12)));
+            "text/plain", original.deliveryId, 0, new EventMessage("different", 12)));
         Task duplicate = context.AcceptAsync(changed);
         Assert.True(duplicate.IsCompletedSuccessfully);
         Assert.False(first.IsCompleted);
@@ -391,7 +391,7 @@ public sealed class DeliveryIngressTests
         }
         else
         {
-            await context.AcceptAsync(Delivery.Create("application/example", new Eventa("other")));
+            await context.AcceptAsync(Delivery.Create("application/example", new EventMessage("other")));
         }
 
         await context.AcceptAsync(delivery);
@@ -408,7 +408,8 @@ public sealed class DeliveryIngressTests
         using EventContext right = new();
         int leftCalls = 0;
         int rightCalls = 0;
-        Delivery original = Delivery.Restore(new DeliveryInput("application/example", "id", 1, new Eventa("event")));
+        Delivery original = Delivery.Restore(new DeliveryInput("application/example", "id", 1,
+            new EventMessage("event")));
         using IDisposable a = left.Subscribe("event", _ => { leftCalls++; return Task.CompletedTask; });
         using IDisposable b = right.Subscribe("event", item =>
         {
@@ -447,5 +448,5 @@ public sealed class DeliveryIngressTests
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private static Delivery NewDelivery() => Delivery.Create("application/example", new Eventa("event"));
+    private static Delivery NewDelivery() => Delivery.Create("application/example", new EventMessage("event"));
 }

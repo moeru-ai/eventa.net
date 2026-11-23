@@ -20,7 +20,7 @@ public sealed class DeliveryBoundaryTests
 
         foreach (object? body in bodies)
         {
-            Delivery delivery = Delivery.Create("application/unknown", new Eventa("unknown", body));
+            Delivery delivery = Delivery.Create("application/unknown", new EventMessage("unknown", body));
             await context.AcceptAsync(delivery);
             Assert.Same(body, received[^1].eventa.body);
             Assert.Same(delivery, received[^1]);
@@ -38,7 +38,7 @@ public sealed class DeliveryBoundaryTests
         using EventContext context = new();
         BinaryData body = new([1, 2, 3], mediaType);
         const string authoritative = "Application/Unknown; MODEL=\"opaque\"";
-        Eventa eventa = new("unknown", body);
+        EventMessage eventa = new("unknown", body);
         Delivery created = Delivery.Create(authoritative, eventa);
         Delivery restored = Delivery.Restore(new DeliveryInput(authoritative, "remote-id", 0, eventa));
         int calls = 0;
@@ -60,8 +60,8 @@ public sealed class DeliveryBoundaryTests
     public async Task EndpointDecode_WithFailedDeliveryResubmitted_RunsOnlyOnce()
     {
         using EventContext context = new();
-        Delivery unknown = Delivery.Create("application/unknown", new Eventa("unknown", new UninspectableBody()));
-        Delivery selected = Delivery.Create("application/unknown", new Eventa("selected", unknown.eventa.body));
+        Delivery unknown = Delivery.Create("application/unknown", new EventMessage("unknown", new UninspectableBody()));
+        Delivery selected = Delivery.Create("application/unknown", new EventMessage("selected", unknown.eventa.body));
         int decodes = 0;
         FormatException error = new("application-owned decode failure");
         using IDisposable registration = context.Subscribe("selected", item =>
@@ -88,7 +88,7 @@ public sealed class DeliveryBoundaryTests
         BinaryData transient = new(pooled.AsMemory(0, 3));
         BinaryData stable = new(transient.ToArray());
         Delivery original = Delivery.Restore(new DeliveryInput("application/octet-stream", "stable", 2,
-            new Eventa("event", stable)));
+            new EventMessage("event", stable)));
         Array.Fill<byte>(pooled, 0xee);
         ArrayPool<byte>.Shared.Return(pooled);
 
@@ -134,7 +134,7 @@ public sealed class DeliveryBoundaryTests
         using EventContext local = new();
         using EventContext remote = new();
         RuntimeValue value = new(42);
-        Delivery original = Delivery.Create("application/example-runtime", new Eventa("event", value));
+        Delivery original = Delivery.Create("application/example-runtime", new EventMessage("event", value));
         using IDisposable a = local.Subscribe("event", item =>
         {
             Assert.Same(value, item.eventa.body);
@@ -150,7 +150,7 @@ public sealed class DeliveryBoundaryTests
         // This is user-owned conversion, not a Core registry or an Adapter capability graph.
         Delivery next = original.Forward();
         Delivery converted = Delivery.Restore(new DeliveryInput("application/example-binary", next.deliveryId,
-            next.hopsRemaining, new Eventa(next.eventa.id, new BinaryData([(byte)value.Number]))));
+            next.hopsRemaining, new EventMessage(next.eventa.id, new BinaryData([(byte)value.Number]))));
         await Task.WhenAll(local.AcceptAsync(original), remote.AcceptAsync(converted));
         Assert.Same(value, original.eventa.body);
         Assert.Equal(original.deliveryId, converted.deliveryId);
@@ -171,7 +171,7 @@ public sealed class DeliveryBoundaryTests
             + " \"type\":\"event\", \"metadata\": {\"text\":\"\\u0041\"},"
             + " \"invokeMetadata\": {\"future\":true}, \"unknownEventa\": [ 1,  2 ], \"body\":null } }";
         TestCarrier retained = new(Encoding.UTF8.GetBytes(prefix), Encoding.UTF8.GetBytes(suffix));
-        DeliveryInput projection = new("application/example", "remote", 1, new Eventa("event"));
+        DeliveryInput projection = new("application/example", "remote", 1, new EventMessage("event"));
         RetainedProjection inbound = new(Delivery.Restore(projection), retained);
         using EventContext context = new();
         using IDisposable local = context.Subscribe("event", item =>
@@ -203,7 +203,7 @@ public sealed class DeliveryBoundaryTests
     [Fact]
     public void Restore_WithVanillaTypeScriptProjection_RequiresExplicitContentType()
     {
-        DeliveryInput vanilla = new(null, "remote", 1, new Eventa("event", new object()));
+        DeliveryInput vanilla = new(null, "remote", 1, new EventMessage("event", new object()));
         Assert.Throws<ArgumentException>(() => Delivery.Restore(vanilla));
         Delivery mapped = Delivery.Restore(vanilla with { contentType = "application/example" });
         Assert.Same(vanilla.eventa, mapped.eventa);
