@@ -49,7 +49,7 @@ Current C# target: `StreamTests.cs`
 ### `invoke-shared.spec.ts`
 
 Status: `adapted`
-Current C# target: `DefinitionConstructionTests.cs`, `Primitives/InvokeEventDefinitionTests.cs`
+Current C# target: `Primitives/DefinitionConstructionTests.cs`, `Primitives/InvokeEventDefinitionTests.cs`
 
 - Adapted to C# by validating tag-derived event IDs and generated uniqueness because C# exposes `Tag`/`*Id` strings rather than TS `invokeType`-tagged event objects.
 
