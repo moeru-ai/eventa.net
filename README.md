@@ -8,11 +8,16 @@
 Transport-agnostic, type-safe events for .NET 10, with ergonomic request/response
 and streaming invoke flows built on top of event primitives.
 
+Use `Delivery` to submit an event to a context, run asynchronous listeners, or
+forward the event to another context. Each context suppresses recently seen delivery
+IDs before invoking listeners. See the [guide to event delivery and forwarding][delivery-guide]
+for examples and the relationship to the typed event APIs below.
+
 Eventa for C# brings the Eventa protocol ideas into idiomatic .NET. It uses
-`EventDefinition<T>` for strongly typed events, `EventContext` for local
-dispatch and adapter hooks, `Task<T>` for unary invokes, `IAsyncEnumerable<T>`
-for streams, `CancellationToken` for cancellation, and `IDisposable` for
-listener lifetimes.
+`EventDefinition<T>` for strongly typed events and `EventContext` for local
+dispatch. Invokes use `Task<T>` for unary results, `IAsyncEnumerable<T>` for
+streams, and `CancellationToken` for cancellation. Subscriptions use
+`IDisposable` for listener lifetimes.
 
 ## Overview
 
@@ -20,32 +25,34 @@ Eventa treats events as the shared protocol boundary. You define stable event
 identities once, subscribe to them through a context, and optionally compose the
 same event primitives into RPC-like invoke contracts.
 
-The C# implementation currently focuses on the core protocol layer:
+Eventa supports:
 
-- publish/subscribe event dispatch
+- local Delivery dispatch with asynchronous listeners, duplicate suppression, and explicit forwarding
+- typed publish/subscribe event dispatch
 - one-shot listeners and explicit unsubscribe support
 - match-expression listeners
 - unary request/response invokes
 - request-stream to unary-response invokes
 - server-streaming and bidirectional streaming invokes
-- adapter observation hooks for send/receive activity
+- adapter hooks for typed send and receive activity
 - in-process channel adapter for connecting two contexts
 - fatal event and fatal match-expression hooks that abort pending invokes
 
 ## Features
 
+- Transport-neutral `Delivery` envelopes with explicit content types and hop budgets.
+- Local admission through `IDeliveryTarget.AcceptAsync` with per-context duplicate suppression.
 - Type-safe event definitions with stable or generated ids.
-- `EventContext` dispatch with direct listeners, one-shot listeners, and match
+- Typed `EventContext` dispatch with direct listeners, one-shot listeners, and match
   expressions.
 - .NET-native resource cleanup through `IDisposable` subscriptions.
 - Unary invoke clients and handlers using `Task<T>`.
 - Streaming invoke clients and handlers using `IAsyncEnumerable<T>`.
 - Request-stream support for unary and streaming invoke flows.
-- Cancellation through `CancellationToken`.
+- Invoke cancellation through `CancellationToken`.
 - AOT-oriented API shape with explicit generic payload types.
-- Minimal adapter surface through `IEventaAdapter`.
-- Constructor-first `Eventa.Adapters.Channels` pair transport for same-process
-  object transport.
+- In-process transport for typed envelopes through `IEventaAdapter` and
+  `Eventa.Adapters.Channels`.
 
 ## Requirements
 
@@ -78,9 +85,38 @@ dotnet run --project examples/Eventa.Example/Eventa.Example.csproj --configurati
 
 The console example walks through basic events, cross-file event contracts,
 dependency injection, unary invokes, streaming invokes, request streams,
-match expressions, adapter hooks, cancellation, and fatal abort hooks.
+match expressions, adapter hooks, cancellation, fatal abort hooks, and event
+delivery and forwarding. See the [Delivery guide][delivery-guide] for a standalone
+example.
 
-## Event Example
+## API transition
+
+These typed-envelope APIs are marked `[Obsolete]` with compiler warning
+`EVENTA001`. They remain available during migration.
+
+- **Typed envelopes and dispatch overloads.** `IEventEnvelope`,
+  `EventEnvelope<TPayload>`, and the current generic `Emit`, `Subscribe`,
+  `SubscribeOnce`, and `Unsubscribe` overloads, including match-expression
+  overloads. For new local routing, use `EventMessage` and `Delivery` with
+  `EventContext.EmitAsync` or `IDeliveryTarget.AcceptAsync`. Subscribe by
+  event ID with `EventContext.Subscribe(string, Func<Delivery, Task>)`.
+  Use the current typed overloads where you need one-shot or match-expression
+  subscriptions today.
+- **Typed transport integration.** `IEventaAdapter`, `EventContext.Adapter`,
+  `IEventInboundDispatcher`, `EventContext.Receive`,
+  `IEventTransportFatalNotifier`, `EventContext.NotifyTransportFatal`, and the
+  typed-envelope Channels transport (`ChannelPipe`, `ChannelEndpoint`, and
+  `ChannelMessage`). In the Delivery model, the transport projects its input
+  into a `Delivery` and application code selects the target.
+
+`IEventContext` remains a separate application-facing capability, and
+`EventDefinition<TPayload>` continues to describe typed event contracts.
+The current Invoke clients and registration helpers in `EventInvoke` and
+`EventStream` still use typed envelopes. A future Invoke implementation will
+use Delivery. See the [compatibility design][compatibility-design] for the
+migration boundaries.
+
+## Typed Event Example
 
 ```csharp
 using Eventa;
@@ -202,10 +238,12 @@ public sealed record EchoResponse(string Output);
 ```
 
 `ChannelPipe.Left` and `ChannelPipe.Right` are symmetric endpoints and each is
-usable as an `IEventContext`. The v1 channel adapter is in-process and
-object-only; it forwards existing typed envelopes through
-`System.Threading.Channels` and does not serialize payloads. Default
-`ChannelPipe` channels are unbounded and intended for local composition, tests,
+usable as an `IEventContext`. The in-process Channels adapter forwards typed
+envelopes through `System.Threading.Channels` without serializing payloads.
+Delivery listeners and forwarding compose directly through `EventContext` and
+`IDeliveryTarget`.
+
+Default `ChannelPipe` channels are unbounded and intended for local composition, tests,
 and same-process boundaries, not as a throughput or backpressure policy. The
 `Eventa` package, including the channel adapter, enables
 `IsAotCompatible=true`; the channel transport path avoids reflection, dynamic
@@ -251,6 +289,11 @@ For example, C# uses `Task<T>`, `IAsyncEnumerable<T>`, `CancellationToken`, and
 `IDisposable` where the TypeScript package uses promises, readable streams,
 abort signals, and unsubscribe callbacks.
 
+Native TypeScript 1.0.2 frames lack the `contentType` that `Delivery.Restore`
+requires. Interoperability with those frames requires an explicit compatibility
+profile to supply the content type and map the frame. See the
+[wire compatibility design][wire-compatibility].
+
 ## Security Note
 
 Eventa forwards the payloads you emit. Validate data at process, network, and
@@ -258,7 +301,7 @@ trust boundaries before sending it to or accepting it from untrusted peers.
 
 ## License
 
-MIT
+[MIT][license-href]
 
 [build-test-src]: https://github.com/moeru-ai/eventa.net/actions/workflows/build-test.yml/badge.svg
 [build-test-href]: https://github.com/moeru-ai/eventa.net/actions/workflows/build-test.yml
@@ -267,4 +310,7 @@ MIT
 [nuget-src]: https://img.shields.io/nuget/vpre/Eventa.svg?style=flat
 [nuget-href]: https://www.nuget.org/packages/Eventa/
 [license-src]: https://img.shields.io/github/license/moeru-ai/eventa.net.svg?style=flat
-[license-href]: LICENSE
+[license-href]: https://github.com/moeru-ai/eventa.net/blob/main/LICENSE
+[delivery-guide]: https://github.com/moeru-ai/eventa.net/blob/main/docs/event-delivery.md
+[compatibility-design]: https://github.com/moeru-ai/eventa.net/blob/main/docs/research/research-3-eventa-typescript-1.0.2-compatibility.md
+[wire-compatibility]: https://github.com/moeru-ai/eventa.net/blob/main/docs/research/research-3-eventa-typescript-1.0.2-compatibility.md#47-compatibility-layers

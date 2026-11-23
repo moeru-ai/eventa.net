@@ -5,7 +5,7 @@ namespace Eventa;
 /// <summary>
 /// Owns listener storage, once-listener removal, match-expression storage, and payload type bindings.
 /// </summary>
-internal sealed class EventListenerStore
+internal sealed partial class EventListenerStore
 {
     /// <summary>
     /// Guards all listener registries and payload-type binding maps.
@@ -270,6 +270,7 @@ internal sealed class EventListenerStore
             _eventPayloadTypes.Clear();
             _matchListeners.Clear();
             _matchExpressionPayloadTypes.Clear();
+            _deliveryListeners.Clear();
         }
     }
 

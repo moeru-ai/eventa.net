@@ -3,6 +3,7 @@ namespace Eventa;
 /// <summary>
 /// Represents one emitted event instance after payload type erasure.
 /// </summary>
+[Obsolete(LegacyTypedApi.Envelope, DiagnosticId = LegacyTypedApi.DiagnosticId)]
 public interface IEventEnvelope
 {
     /// <summary>
